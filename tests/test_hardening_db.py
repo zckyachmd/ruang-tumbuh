@@ -129,6 +129,16 @@ class HardeningDatabaseTests(unittest.TestCase):
             for thread in threads:thread.join(timeout=10)
         self.assertCountEqual(results,['reserved','denied'])
 
+    def test_production_admission_is_separate_from_data_consent(self):
+        from ruang_tumbuh.store import Denied
+        update=self.enqueue('synthetic admitted request')
+        with patch.dict(os.environ,{'APP_ENV':'production','FAMILY_CREATOR_IDS':'','AI_FAMILY_IDS':''}):
+            with self.assertRaises(Denied):self.store.create_family(self.user,'Unauthorized','Synthetic')
+            with self.assertRaises(BudgetExceeded):
+                with self.store.connect() as conn:reserve_ai(conn,self.family,self.user,update)
+            with patch.dict(os.environ,{'AI_FAMILY_IDS':str(self.family)}):
+                with self.store.connect() as conn:reserve_ai(conn,self.family,self.user,update)
+
     def test_user_lock_preserves_command_before_record(self):
         other = self.store.save_child(self.family,self.user,'Bima',None,None,None)
         first = self.enqueue(f'/pilih {self.family} {other}')

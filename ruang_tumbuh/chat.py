@@ -2,6 +2,7 @@
 
 import re
 from datetime import datetime, date, timedelta
+from .safety import route as safety_route
 
 
 def completed_record(text, received_at, zone):
@@ -48,7 +49,7 @@ def completed_record(text, received_at, zone):
 
 def interpret(text, received_at, zone):
     lowered = text.strip().lower()
-    if any(word in lowered for word in ('tidak bernapas', 'tidak bernafas', 'kejang', 'tidak sadar')):
+    if safety_route(text) == 'emergency':
         return {'kind': 'emergency'}
     if lowered == '/start':
         return {'kind': 'start'}

@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from psycopg.types.json import Jsonb
 
-from .chat import interpret
 from .safety import route as safety_route, EMERGENCY_MESSAGE, HEALTH_MESSAGE
 from .agent import FakeProvider, OpenAICompatibleProvider, ProviderError, ai_consent_scope, render_event
 from .store import Denied, Invalid, Store

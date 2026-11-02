@@ -15,16 +15,19 @@ Baseline: `082f35c5df0522c25889a60d83b31d291e9e5476`. Work is tracked by issue #
 | #8 | Decode/validate inside per-job exception boundary | Corrupt row followed by valid row in PostgreSQL; provider never invoked on corrupt input |
 | #9 | Stable oldest-message order per user plus session advisory lock across commits/network calls | PostgreSQL locked-user/two-worker selection-before-record regression |
 | #10 | Family-scoped keyed lookup tokens for diaper categories and LIMIT 1 lookup | 50k newer pee rows + older poop fixture; EXPLAIN must use events_lookup |
-| #11 | Period query tools, numbered candidates, versioned edit/delete proposals, reminder create/list/cancel, source-free natural renderer, Mini App reminder/delivery controls | Tool validation, PostgreSQL range/edit/idempotency tests; browser suite covers selected flows |
+| #11 | Period query tools, numbered candidates, versioned edit/delete proposals, reminder create/list/cancel and notification settings with confirmation, source-free natural renderer, Mini App reminder/delivery controls | Tool validation, PostgreSQL range/edit/idempotency tests; browser suite covers selected flows |
 | #12 | Permission ID 202611419 recorded; metadata-only public manifest; protected server loader, checksum validation and deterministic LMS; raw trends and comparison status | CI verifies every official SD column across ten workbook assets, then tests loader and selected boundary cases; production comparison still needs a reviewed validation record |
 | #13 | Local bounded source registry; WHO topics/results never sent to external classifier; unsupported clinical queries refused | Static-response injection/refusal unit tests; full clinical/language review is still outstanding |
 | #14 | PostgreSQL CI, Docker build/Compose parse, browser mobile/desktop acceptance, container recreate/DB restore suite; heartbeat and content-free metrics | CI is authoritative; live Telegram/provider, public TLS and clinical acceptance remain separate operational gates |
 
 ## Evidence and limitations
 
-Initial CI run at `d5c3bef` passed **80 tests** with PostgreSQL 16, built the runtime image, and parsed production Compose. The expanded run at `c8d2ce4` passed **82 tests**, including the 50k lookup/index regression. Its WHO job passed **94,822 numerical checks** against ten checksum-pinned official workbooks. The browser test discovered an implicit-label accessibility problem; labels were changed to explicit `for`/`id` associations and the browser suite is rerun on subsequent commits.
+CI at `82e6c5f` ([run 41484316920](https://github.com/zckyachmd/ruang-tumbuh/actions/runs/41484316920)) passed **90 tests** with PostgreSQL 16, including the 50k lookup/index regression and encrypted private-button revocation checks. Browser acceptance passed at **390px and 1280px**, including two members with different active child profiles and session expiry/re-login. Docker image build and production Compose parsing passed. Container recreate retained data, and the actual `scripts/backup-postgres.sh` round trip passed with `age` ciphertext mode `0600` and restore to an isolated PostgreSQL database.
 
-The source runner could not install PostgreSQL or dependencies because its package access was restricted. Actual database/build verification therefore runs on GitHub Actions, not a mock database. The added Docker smoke test verifies a synthetic encrypted-column dump/restore; it does not certify production key custody, host encryption, the operator's scheduled `age` backups, or disaster-recovery procedures.
+The WHO job passed **94,864 numerical and loader/boundary checks** across ten checksum-pinned official workbooks. Assets were installed only in the temporary server runner directory and removed after verification; none were published as logs/artifacts. Production activation still requires the operator's reviewed validation record; the numerical suite does not authorize clinical claims.
+
+A follow-up regression unifies the deterministic provider's negation routing with the worker safety policy. The PR check summary records the exact test count for subsequent heads.
+The source runner could not install PostgreSQL or dependencies because its package access was restricted. Actual database/build verification therefore runs on GitHub Actions, not a mock database. The Docker smoke test verifies a synthetic run of the actual age backup script and restore; it does not certify production key custody, host encryption, backup scheduling, off-host retention or disaster-recovery procedures.
 
 Permission has been granted. It does not supply live provider credentials, prove clinical correctness, or approve future commercial distribution. The private permission letter and licensed workbooks are not public artifacts.
 
@@ -50,7 +53,7 @@ python tests/ui_acceptance.py
 python tests/runtime_smoke.py
 ```
 
-The runtime smoke test creates its own Compose project and deletes only that project's synthetic volumes afterwards. It requires Docker and a free localhost port 8147. Browser tests create/drop an isolated schema and use localhost port 8137.
+The runtime smoke test requires `age` and creates its own Compose project and deletes only that project's synthetic volumes afterwards. It requires Docker and a free localhost port 8147. Browser tests create/drop an isolated schema and use localhost port 8137.
 
 WHO reference checks run on a protected temporary server directory and delete assets afterwards; never upload that directory as an artifact:
 
