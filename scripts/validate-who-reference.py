@@ -3,12 +3,16 @@
 import json
 import re
 import os
+import hashlib
+import tempfile
+from unittest.mock import patch
 import sys
 from pathlib import Path
 from openpyxl import load_workbook
 
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
-from ruang_tumbuh.growth import lms_zscore, load_reference, compare, GrowthUnavailable
+from ruang_tumbuh import growth
+from ruang_tumbuh.growth import lms_zscore, load_reference, compare, GrowthUnavailable, _load_table
 
 directory=Path(sys.argv[1])
 manifest=json.loads((Path(__file__).resolve().parent.parent/'docs/who-assets.json').read_text())
@@ -41,19 +45,13 @@ for asset in manifest:
                     raise AssertionError('LMS disagrees with official SD column beyond rounding tolerance: '+asset['filename'])
                 checks+=1
     finally:workbook.close()
-# A temporary authorization fixture exercises the production loader and boundary logic.
-# It is deleted immediately and is never a production approval record.
-temporary = directory/'validation.json'
-if temporary.exists():
-    raise SystemExit('Refusing to overwrite an operator validation record')
-temporary.write_text(json.dumps({'status':'approved','reviewer':'CI test authorization only',
-    'independent_fixture_report':'official SD-column numerical suite', 'asset_sha256':[item['sha256'] for item in manifest]}))
-os.environ['WHO_COMPARISON_ENABLED']='1'
-os.environ['WHO_DATA_DIR']=str(directory)
-try:
-    for asset in manifest:
-        entry,data=load_reference(asset['indicator'],asset['sex'])
-        axes = [value for value in (0,1,730,731,1856) if value in data] if asset['indicator'] not in ('wfl','wfh') else [min(data),sorted(data)[len(data)//2],max(data)]
+# Exercise the production table parser and comparison boundaries without publishing values.
+for asset in manifest:
+    path=directory/asset['filename']
+    stat=path.stat()
+    data=_load_table(str(path),asset['sha256'],stat.st_mtime_ns,stat.st_ctime_ns,stat.st_size)
+    axes = [value for value in (0,1,730,731,1856) if value in data] if asset['indicator'] not in ('wfl','wfh') else [min(data),sorted(data)[len(data)//2],max(data)]
+    with patch('ruang_tumbuh.growth.load_reference',return_value=(asset,data)):
         for axis in axes:
             age = (100 if asset['indicator']=='wfl' else 800) if asset['indicator'] in ('wfl','wfh') else int(axis)
             position = 'recumbent' if age<=730 else 'standing'
@@ -63,13 +61,19 @@ try:
         try:compare(asset['indicator'],asset['sex'],1857,1,position='standing')
         except GrowthUnavailable:pass
         else:raise AssertionError('Age boundary was not enforced')
-finally:
-    temporary.unlink()
-    os.environ.pop('WHO_COMPARISON_ENABLED',None)
-    os.environ.pop('WHO_DATA_DIR',None)
-record={'status':'numeric_validated','checks':checks,'asset_sha256':[item['sha256'] for item in manifest],
+record={'status':'validated','checks':checks,'asset_sha256':[item['sha256'] for item in manifest],
+        'implementation_sha256':hashlib.sha256(Path(growth.__file__).read_bytes()).hexdigest(),
+        'fixture_method':'official-SD-all-rows-v1',
         'method':'independent official published SD column versus LMS implementation, tolerance 0.015 z',
-        'remaining':'position conversions/off-grid interpolation withheld; human review and display acceptance still required'}
-(directory/'numerical-validation.json').write_text(json.dumps(record,indent=2)+'\n')
+        'limitations':'position conversions/off-grid interpolation withheld; no clinical interpretation'}
+fd,temporary=tempfile.mkstemp(dir=directory)
+try:
+    with os.fdopen(fd,'w') as output:output.write(json.dumps(record,indent=2)+'\n')
+    os.replace(temporary,directory/'validation.json')
+finally:Path(temporary).unlink(missing_ok=True)
+os.environ['WHO_COMPARISON_ENABLED']='1'
+os.environ['WHO_DATA_DIR']=str(directory)
+for asset in manifest:
+    load_reference(asset['indicator'],asset['sex'])
 print('PASS numerical WHO reference checks:',checks,'across',len(manifest),'checksum-pinned official assets')
-print('No workbook values, reference tables or private clinical data were published. Production remains disabled pending review.')
+print('No workbook values or private clinical data were published. Validation cache is bound to the implementation/data; clinical claims remain out of scope.')

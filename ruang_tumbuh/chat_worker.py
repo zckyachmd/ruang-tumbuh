@@ -110,6 +110,9 @@ def _process_claimed(store, provider, row, token):
                     'Pilih profil: /keluarga lalu /pilih ID_KELUARGA ID_ANAK\n'
                     'Catatan hanya dibuat dari informasi yang kamu kirim; ini bukan diagnosis atau layanan darurat.')
                 draft = False
+            elif name == 'unsupported':
+                response = 'Bisa kirim dalam teks? Saat ini aku belum membaca foto, suara, atau file. Belum ada catatan yang disimpan.'
+                draft = False
             elif name == 'daftar':
                 parts = argument.split('|')
                 if len(parts) != 2 or not all(part.strip() for part in parts):

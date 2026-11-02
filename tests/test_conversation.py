@@ -86,6 +86,13 @@ class ConversationTests(unittest.TestCase):
         callback['callback_query']['data']='delete arbitrary SQL'
         self.assertIsNone(normalize_private_update(callback))
 
+    def test_non_text_message_is_not_misread_or_retained(self):
+        update={'update_id':1,'message':{'from':{'id':7},'chat':{'id':7,'type':'private'},'date':123,'photo':[{'file_id':'private'}],'caption':'private caption'}}
+        normalized=normalize_private_update(update)
+        self.assertEqual(normalized['message']['text'],'/unsupported')
+        self.assertNotIn('file_id',str(normalized))
+        self.assertNotIn('private caption',str(normalized))
+
 
 if __name__ == '__main__':
     unittest.main()

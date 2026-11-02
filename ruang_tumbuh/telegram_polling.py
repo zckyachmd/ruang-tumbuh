@@ -56,7 +56,11 @@ def persist_updates(conn, updates, cipher=None):
             raise ValueError("Invalid Telegram update batch")
         update_id = update["update_id"]
         highest = max(highest, update_id)
-        payload = normalize_private_update(update)
+        try:
+            payload = normalize_private_update(update)
+        except (ValueError, TypeError, KeyError):
+            # A single unsupported/malformed private message must not poison the cursor.
+            continue
         if payload is None:
             continue
         user = payload['message']['from']['id']

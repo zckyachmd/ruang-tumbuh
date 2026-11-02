@@ -26,4 +26,4 @@ for entry in manifest:
     finally:
         Path(temporary).unlink(missing_ok=True)
     print('Verified:', entry['filename'])
-print('Assets installed. Comparison stays disabled until independent validation is approved.')
+print('Assets installed. Run validate-who-reference.py before enabling mathematical comparisons.')

@@ -240,3 +240,14 @@ class HardeningDatabaseTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT status FROM agent_drafts WHERE update_id=%s',(proposal,)).fetchone()[0],'cancelled')
             context=conn.execute('SELECT content FROM conversation_contexts WHERE family_id=%s AND telegram_user_id=%s',(self.family,self.user)).fetchone()[0]
             self.assertEqual(self.store.data_cipher.open_json(context,'conversation_contexts.content')['kind'],'clarification')
+
+    def test_photo_does_not_poison_polling_cursor_or_create_an_event(self):
+        from ruang_tumbuh.telegram_polling import persist_updates
+        update=time.time_ns()//1000
+        photo={'update_id':update,'message':{'date':int(time.time()),'from':{'id':self.user},'chat':{'id':self.user,'type':'private'},'photo':[{'file_id':'synthetic-private-file'}]}}
+        with self.store.connect() as conn:
+            conn.execute('DELETE FROM telegram_poll_cursor')
+            self.assertEqual(persist_updates(conn,[photo],self.store.data_cipher),update+1)
+        self.assertTrue(process_one(self.store))
+        self.assertIn('kirim dalam teks',self.response(update))
+        self.assertEqual(self.store.timeline(self.family,self.user,self.child),[])

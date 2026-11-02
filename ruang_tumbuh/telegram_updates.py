@@ -12,6 +12,8 @@ def normalize_private_update(update):
         if not isinstance(callback, dict) or not isinstance(callback.get('message'), dict):
             return None
         original = callback['message']
+        if original.get('date') == 0:
+            return None  # Telegram InaccessibleMessage: do not act on an unavailable prompt.
         action = re.fullmatch(r'(save|cancel):(\d{1,19})', callback.get('data', ''))
         choose = re.fullmatch(r'choose:(\d{1,19}):(\d{1,19})', callback.get('data', ''))
         edit = re.fullmatch(r'editdraft:(\d{1,19})', callback.get('data', ''))
@@ -26,6 +28,8 @@ def normalize_private_update(update):
     sender = message.get('from')
     user = sender.get('id') if isinstance(sender, dict) else None
     text, date = message.get('text'), message.get('date')
+    if text is None:
+        text = '/unsupported'  # Keep no file identifiers/captions; ask for text, never infer facts.
     if (type(update_id) is not int or update_id < 0 or type(user) is not int or not 0 < user < 2**52
             or message['chat'].get('id') != user or sender.get('is_bot') is True
             or not isinstance(text, str) or len(text) > 4096 or type(date) is not int or date <= 0):
