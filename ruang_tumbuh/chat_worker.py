@@ -71,6 +71,8 @@ def _process_claimed(store, provider, row, token):
     response_family = None
     proposed_events = None
     proposed_change = None
+    reply_markup = None
+    authorization_families = []
     usage = None
     context_update = False
     next_context = None
@@ -153,6 +155,15 @@ def _process_claimed(store, provider, row, token):
                             f'{child[1]} (ID {child[0]})' + (' ✓' if selection and (selection[0], selection[1]) == (row[0], child[0]) else '')
                             for child in store.children(row[0], user)) for row in families))
                 draft = False
+                if families:
+                    authorization_families = [row[0] for row in families]
+                    buttons = []
+                    for available in families:
+                        for profile in store.children(available[0],user):
+                            buttons.append([{'text':(profile[1]+' · '+available[1])[:50], 'callback_data':f'choose:{available[0]}:{profile[0]}'}])
+                            if len(buttons)>=20:break
+                        if len(buttons)>=20:break
+                    reply_markup = {'inline_keyboard':buttons}
             elif name == 'pilih':
                 parts = argument.split()
                 valid_ids = len(parts) == 2 and all(part.isdecimal() and len(part) <= 19 and int(part) <= 9223372036854775807 for part in parts)
@@ -239,8 +250,24 @@ def _process_claimed(store, provider, row, token):
             else:
                 zone = ZoneInfo(zone_name)
                 confirmation = re.fullmatch(r'\s*simpan\s+(\d{1,19})\s*', text, flags=re.IGNORECASE)
+                editing = re.fullmatch(r'\s*ubah\s+(\d{1,19})\s*', text, flags=re.IGNORECASE)
                 cancellation = re.fullmatch(r'\s*batal\s+(\d{1,19})\s*', text, flags=re.IGNORECASE)
-                if confirmation or cancellation:
+                if editing:
+                    draft_id=int(editing[1])
+                    if draft_id>9223372036854775807:raise Invalid()
+                    with store.connect() as conn:
+                        store._access(conn,family,user)
+                        old=conn.execute("UPDATE agent_drafts SET status='cancelled' WHERE update_id=%s AND family_id=%s AND telegram_user_id=%s AND child_id=%s AND status='pending' AND expires_at>now() RETURNING events", (draft_id,family,user,selected_child)).fetchone()
+                    if old:
+                        import json
+                        events=store.data_cipher.open_json(old[0],'agent_drafts.events')
+                        next_context={'kind':'clarification','message':'Revisi usulan yang belum menjadi fakta tersimpan: '+json.dumps(events,ensure_ascii=False)[:3000]}
+                        context_update=True
+                        result={'kind':'changed','message':'Bagian mana yang ingin diubah? Usulan sebelumnya dibatalkan dan belum menjadi catatan. Sebutkan nilai/waktu penggantinya, lalu saya tampilkan usulan baru untuk diperiksa.'}
+                        response_family=family
+                    else:
+                        result={'kind':'expired_draft'}
+                elif confirmation or cancellation:
                     draft_id = int((confirmation or cancellation)[1])
                     if draft_id > 9223372036854775807:
                         raise Invalid()
@@ -386,14 +413,14 @@ def _process_claimed(store, provider, row, token):
                     response = 'Belum saya simpan. ' + clarification_question(text)
                     next_context = {'kind': 'clarification', 'message': text[:4000]}
                     draft = True
-        if selection and response_family == selection[0]:
+        if selection and not command and response_family == selection[0]:
             response = f'Untuk {selection[4]} 🤍\n' + response
         # Non-record commands may list many families; show a bounded preview.
         if len(response.encode('utf-16-le')) // 2 > 3900:
             response = response[:1750] + '\n… Ringkasan dipotong; detail lengkap tersedia di Mini App.'
         with store.connect() as conn:
-            if response_family is not None:
-                store._access(conn, response_family, user)
+            for required_family in sorted(set(authorization_families + ([response_family] if response_family is not None else []))):
+                store._access(conn, required_family, user)
             current = conn.execute("SELECT 1 FROM inbound_updates WHERE update_id=%s AND status='processing' AND lease_token=%s FOR UPDATE", (update_id, token)).fetchone()
             if not current:
                 return True
@@ -407,7 +434,7 @@ def _process_claimed(store, provider, row, token):
                         conn.execute("INSERT INTO agent_drafts (update_id,family_id,child_id,telegram_user_id,events,expires_at) VALUES (%s,%s,%s,%s,%s,now()+interval '24 hours') ON CONFLICT DO NOTHING", (update_id, family, selected_child, user, Jsonb(store.data_cipher.seal_json(proposed_events, "agent_drafts.events"))))
             if usage is not None:
                 conn.execute("INSERT INTO agent_usage (update_id,family_id,model,input_tokens,output_tokens) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", (update_id, family, usage['model'], usage['input_tokens'], usage['output_tokens']))
-            conn.execute("INSERT INTO chat_outbox (update_id,recipient_id,family_id,body) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING", (update_id, user, response_family, store.data_cipher.seal(response, "chat_outbox.body")))
+            conn.execute("INSERT INTO chat_outbox (update_id,recipient_id,family_id,body,reply_markup,authorization_families) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", (update_id, user, response_family, store.data_cipher.seal(response, "chat_outbox.body"), store.data_cipher.seal_json(reply_markup,'chat_outbox.reply_markup') if reply_markup else '', Jsonb(authorization_families)))
             conn.execute("UPDATE inbound_updates SET family_id=COALESCE(family_id,%s),payload='{}'::jsonb,status='completed',lease_until=NULL,lease_token=NULL WHERE update_id=%s", (response_family, update_id))
         if update.get('callback_id') and os.getenv('TELEGRAM_DELIVERY') == 'telegram':
             from .delivery import acknowledge_callback

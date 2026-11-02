@@ -13,11 +13,14 @@ def normalize_private_update(update):
             return None
         original = callback['message']
         action = re.fullmatch(r'(save|cancel):(\d{1,19})', callback.get('data', ''))
-        if not action or not isinstance(callback.get('id'), str) or len(callback['id']) > 256:
+        choose = re.fullmatch(r'choose:(\d{1,19}):(\d{1,19})', callback.get('data', ''))
+        edit = re.fullmatch(r'editdraft:(\d{1,19})', callback.get('data', ''))
+        if not (action or choose or edit) or not isinstance(callback.get('id'), str) or len(callback['id']) > 256:
             return None
         callback_id = callback['id']
+        text = (('simpan ' if action[1] == 'save' else 'batal ') + action[2]) if action else f'/pilih {choose[1]} {choose[2]}' if choose else 'ubah ' + edit[1]
         message = {'chat': original.get('chat'), 'date': original.get('date'), 'from': callback.get('from'),
-                   'text': ('simpan ' if action[1] == 'save' else 'batal ') + action[2]}
+                   'text': text}
     if not isinstance(message, dict) or not isinstance(message.get('chat'), dict) or message['chat'].get('type') != 'private':
         return None
     sender = message.get('from')

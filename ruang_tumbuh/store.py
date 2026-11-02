@@ -470,7 +470,7 @@ class Store:
             if not request:
                 raise Invalid()
             conn.execute('INSERT INTO family_deletion_receipts (family_id,actor_id,token_hash) VALUES (%s,%s,%s)', (family, user, digest))
-            conn.execute('DELETE FROM chat_outbox WHERE family_id=%s OR update_id IN (SELECT update_id FROM inbound_updates WHERE family_id=%s)', (family, family))
+            conn.execute('DELETE FROM chat_outbox WHERE family_id=%s OR authorization_families @> %s OR update_id IN (SELECT update_id FROM inbound_updates WHERE family_id=%s)', (family, Jsonb([family]), family))
             conn.execute('DELETE FROM agent_drafts WHERE family_id=%s', (family,))
             conn.execute('DELETE FROM conversation_contexts WHERE family_id=%s', (family,))
             conn.execute('DELETE FROM agent_usage WHERE family_id=%s', (family,))

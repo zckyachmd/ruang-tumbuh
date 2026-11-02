@@ -15,7 +15,7 @@ class RetryAfter:
     seconds: int
 
 
-def telegram_send(token, recipient, body):
+def telegram_send(token, recipient, body, reply_markup=None):
     # Rendering owns previews; never silently truncate an arbitrary send here.
     if not body or len(body.encode('utf-16-le')) // 2 > 4096:
         return 'failed'
@@ -25,6 +25,10 @@ def telegram_send(token, recipient, body):
         payload['reply_markup'] = {'inline_keyboard': [[
             {'text':'Simpan 🤍', 'callback_data':'save:'+proposal[1]},
             {'text':'Batal', 'callback_data':'cancel:'+proposal[1]}]]}
+        if 'Periksa usulan berikut' in body:
+            payload['reply_markup']['inline_keyboard'].append([{'text':'Ubah usulan', 'callback_data':'editdraft:'+proposal[1]}])
+    if reply_markup is not None:
+        payload['reply_markup'] = reply_markup
     request = urllib.request.Request(
         f'https://api.telegram.org/bot{token}/sendMessage',
         data=json.dumps(payload).encode(),
@@ -66,22 +70,23 @@ def deliver_one(store, mode, token='', sender=telegram_send):
             AND (next_attempt_at IS NULL OR next_attempt_at<=now())
             ORDER BY update_id FOR UPDATE SKIP LOCKED LIMIT 1)
             UPDATE chat_outbox o SET status='attempted',attempted_at=now(),attempts=attempts+1 FROM candidate c
-            WHERE o.update_id=c.update_id RETURNING o.update_id,o.recipient_id,o.family_id,o.body""").fetchone()
+            WHERE o.update_id=c.update_id RETURNING o.update_id,o.recipient_id,o.family_id,o.body,o.reply_markup,o.authorization_families""").fetchone()
     if not row:
         return False
-    update_id, user, family, body = row
+    update_id, user, family, body, markup, authorization_families = row
     body = store.data_cipher.open(body, "chat_outbox.body")
+    markup = store.data_cipher.open_json(markup, 'chat_outbox.reply_markup') if markup else None
     with store.connect() as conn:
-        if family is not None:
-            try:
-                store._access(conn, family, user)
-            except Denied:
-                conn.execute("UPDATE chat_outbox SET status='failed',finished_at=now() WHERE update_id=%s AND status='attempted'", (update_id,))
-                return True
+        try:
+            for required_family in sorted(set(authorization_families + ([family] if family is not None else []))):
+                store._access(conn, required_family, user)
+        except Denied:
+            conn.execute("UPDATE chat_outbox SET status='failed',finished_at=now() WHERE update_id=%s AND status='attempted'", (update_id,))
+            return True
         current = conn.execute('SELECT status FROM chat_outbox WHERE update_id=%s FOR UPDATE', (update_id,)).fetchone()
         if not current or current[0] != 'attempted':
             return True
-        status = 'simulated' if mode == 'fake' else sender(token, user, body)
+        status = 'simulated' if mode == 'fake' else sender(token, user, body, markup) if sender is telegram_send else sender(token, user, body)
         if isinstance(status, RetryAfter):
             conn.execute("""UPDATE chat_outbox SET status=CASE WHEN attempts<5 THEN 'pending' ELSE 'failed' END,
                 next_attempt_at=%s,finished_at=NULL WHERE update_id=%s AND status='attempted'""",
@@ -89,6 +94,6 @@ def deliver_one(store, mode, token='', sender=telegram_send):
             return True
         if status not in ('sent', 'failed', 'uncertain', 'simulated'):
             status = 'uncertain'
-        conn.execute("UPDATE chat_outbox SET status=%s,body=CASE WHEN %s IN ('sent','failed','simulated') THEN '' ELSE body END,finished_at=now() WHERE update_id=%s AND status='attempted'", (status, status, update_id))
+        conn.execute("UPDATE chat_outbox SET status=%s,body=CASE WHEN %s IN ('sent','failed','simulated') THEN '' ELSE body END,reply_markup=CASE WHEN %s IN ('sent','failed','simulated') THEN '' ELSE reply_markup END,finished_at=now() WHERE update_id=%s AND status='attempted'", (status, status, status, update_id))
     return True
 

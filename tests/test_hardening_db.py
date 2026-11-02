@@ -202,3 +202,31 @@ class HardeningDatabaseTests(unittest.TestCase):
             conn.execute('INSERT INTO chat_mutations(update_id,family_id,child_id,telegram_user_id,content) VALUES (%s,%s,%s,%s,%s)',
                          (stale,self.family,self.child,self.user,self.store.data_cipher.seal_json(change,'chat_mutations.content')))
         with self.assertRaises(Conflict):confirm_change(self.store,self.family,self.user,self.child,stale)
+
+    def test_private_profile_buttons_are_encrypted_and_recheck_revocation(self):
+        menu=self.enqueue('/keluarga');process_one(self.store)
+        with self.store.connect() as conn:
+            markup,families=conn.execute('SELECT reply_markup,authorization_families FROM chat_outbox WHERE update_id=%s',(menu,)).fetchone()
+        self.assertTrue(markup.startswith('rt1:'))
+        self.assertIn(self.family,families)
+        decoded=self.store.data_cipher.open_json(markup,'chat_outbox.reply_markup')
+        self.assertEqual(decoded['inline_keyboard'][0][0]['callback_data'],f'choose:{self.family}:{self.child}')
+        guest=secrets.randbits(40)+1
+        self.store.redeem(guest,self.store.invite(self.family,self.user))
+        self.store.set_role(self.family,self.user,guest,'owner')
+        self.store.revoke(self.family,guest,self.user)
+        def never_send(*args):raise AssertionError('Revoked profile data must not be delivered')
+        self.assertTrue(deliver_one(self.store,'telegram',sender=never_send))
+        with self.store.connect() as conn:
+            self.assertEqual(conn.execute('SELECT status FROM chat_outbox WHERE update_id=%s',(menu,)).fetchone()[0],'failed')
+
+    def test_edit_button_cancels_old_proposal_without_writing_facts(self):
+        now=datetime.now(timezone.utc).astimezone(__import__('zoneinfo').ZoneInfo('Asia/Jakarta'))-timedelta(minutes=2)
+        proposal=self.enqueue('ASIP 60 ml hari ini jam '+now.strftime('%H.%M'));process_one(self.store)
+        edit=self.enqueue(f'ubah {proposal}');process_one(self.store)
+        self.assertIn('Bagian mana',self.response(edit))
+        self.assertEqual(self.store.timeline(self.family,self.user,self.child),[])
+        with self.store.connect() as conn:
+            self.assertEqual(conn.execute('SELECT status FROM agent_drafts WHERE update_id=%s',(proposal,)).fetchone()[0],'cancelled')
+            context=conn.execute('SELECT content FROM conversation_contexts WHERE family_id=%s AND telegram_user_id=%s',(self.family,self.user)).fetchone()[0]
+            self.assertEqual(self.store.data_cipher.open_json(context,'conversation_contexts.content')['kind'],'clarification')

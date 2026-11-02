@@ -77,6 +77,10 @@ class ConversationTests(unittest.TestCase):
     def test_callback_identity_and_supported_actions_are_checked(self):
         callback={'update_id':1,'callback_query':{'id':'synthetic','from':{'id':7},'data':'save:123','message':{'date':123,'chat':{'id':7,'type':'private'}}}}
         self.assertEqual(normalize_private_update(callback)['message']['text'],'simpan 123')
+        callback['callback_query']['data']='choose:10:20'
+        self.assertEqual(normalize_private_update(callback)['message']['text'],'/pilih 10 20')
+        callback['callback_query']['data']='editdraft:123'
+        self.assertEqual(normalize_private_update(callback)['message']['text'],'ubah 123')
         callback['callback_query']['message']['chat']['id']=8
         with self.assertRaises(ValueError):normalize_private_update(callback)
         callback['callback_query']['data']='delete arbitrary SQL'
