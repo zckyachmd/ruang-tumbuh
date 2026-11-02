@@ -3,7 +3,13 @@
 import json
 import os
 import sys
-from .store import Store
+
+
+def worker_age(store):
+    """Keep the frequent container probe independent of growing history tables."""
+    with store.connect() as conn:
+        row = conn.execute("SELECT extract(epoch FROM now()-seen_at) FROM worker_heartbeats WHERE name='chat'").fetchone()
+    return float(row[0]) if row else None
 
 
 def snapshot(store):
@@ -19,10 +25,15 @@ def snapshot(store):
 
 if __name__ == '__main__':
     try:
-        result = snapshot(Store(os.environ['DATABASE_URL']))
+        from .store import Store
+        store = Store(os.environ['DATABASE_URL'])
         if '--metrics' in sys.argv:
+            result = snapshot(store)
             print(json.dumps(result))
-        raise SystemExit(0 if result['worker_age_seconds'] is not None and result['worker_age_seconds'] < 120 else 1)
+            age = result['worker_age_seconds']
+        else:
+            age = worker_age(store)
+        raise SystemExit(0 if age is not None and age < 120 else 1)
     except Exception:
         # Do not include connection strings or family content in health output.
         raise SystemExit(1)

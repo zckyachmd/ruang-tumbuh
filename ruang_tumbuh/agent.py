@@ -140,7 +140,7 @@ class OpenAICompatibleProvider:
         return json.loads(body)
 
     def propose(self, text, received_at, zone, *, known_names=(), known_birth_dates=()):
-        for name in sorted({name.strip() for name in known_names if isinstance(name, str) and len(name.strip()) >= 3}, key=len, reverse=True):
+        for name in sorted({name.strip() for name in known_names if isinstance(name, str) and name.strip()}, key=len, reverse=True):
             text = re.sub(r'(?<![\w])' + re.escape(name) + r'(?![\w])', '[nama disamarkan]', text, flags=re.IGNORECASE)
         for birth_date in known_birth_dates:
             try:

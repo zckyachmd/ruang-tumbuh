@@ -1,6 +1,6 @@
 # Review implementation and release evidence
 
-Baseline: `082f35c5df0522c25889a60d83b31d291e9e5476`. Work is tracked by issue #1 and PR #15. Main has not been changed by this work.
+Baseline: `082f35c5df0522c25889a60d83b31d291e9e5476`. Work is tracked by issue #1 and PR #15; the PR records merge status and the exact verified revision.
 
 ## Implementation map
 
@@ -27,6 +27,7 @@ CI at `82e6c5f` ([run 41484316920](https://github.com/zckyachmd/ruang-tumbuh/act
 The WHO job passed **94,864 numerical and loader/boundary checks** across ten checksum-pinned official workbooks. Assets were installed only in the temporary server runner directory and removed after verification; none were published as logs/artifacts. Production activation requires installing the protected assets and regenerating their code/data-bound validation cache; the numerical suite does not authorize clinical claims.
 
 A follow-up regression unifies the deterministic provider's negation routing with the worker safety policy. The PR check summary records the exact test count for subsequent heads.
+The final synthetic language evaluation contains 40 cases covering current signs, negation, history, educational questions and mixed clauses. Compared with the pre-change router, emergency false positives in this set decreased from 12 to 0; both versions had 0 emergency false negatives in this set. All 40 current routing expectations pass. These are engineering-authored expectations, not clinical ground truth or an estimate of real-world sensitivity/specificity. CI prints the evaluation on each run; qualified clinical review remains pending. Known profile names of one or two characters are also redacted before external classification, without replacing substrings inside other words.
 The source runner could not install PostgreSQL or dependencies because its package access was restricted. Actual database/build verification therefore runs on GitHub Actions, not a mock database. The Docker smoke test verifies a synthetic run of the actual age backup script and restore; it does not certify production key custody, host encryption, backup scheduling, off-host retention or disaster-recovery procedures.
 
 Permission has been granted. It does not supply live provider credentials, prove clinical correctness, or approve future commercial distribution. The private permission letter and licensed workbooks are not public artifacts.
@@ -67,6 +68,7 @@ Numerical success atomically writes `validation.json`, bound to the implementati
 ## Health and recovery
 
 `docker compose exec worker python -m ruang_tumbuh.healthcheck --metrics` returns only heartbeat age, queue/outbox status counts, oldest pending age and AI reservation count. Alert on absent/stale heartbeat, growing queue age and failed/uncertain delivery. Set thresholds from measured deployment behavior; no latency SLO is asserted here.
+The default container probe reads only the single worker heartbeat row. Full history counters run only with the explicit `--metrics` option, keeping the frequent liveness check independent of queue history size.
 
 An explicit 429 is retried up to five attempts. An unknown delivery outcome is not automatically resent. Mini App Settings shows recent personal delivery status. Inspect the record timeline before re-entering an activity whose acknowledgement was not received. A failed notification does not establish that an activity was absent or that a child is safe.
 

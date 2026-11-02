@@ -93,6 +93,15 @@ class AgentTests(unittest.TestCase):
         for private_value in ('Lili', 'Keluarga Mawar', 'ibu@example.com', '+628123456789', 'Jl. Mawar No. 12', 'Jakarta'):
             self.assertNotIn(private_value, sent)
 
+    def test_short_profile_names_are_redacted_without_changing_other_words(self):
+        calls = []
+        provider = OpenAICompatibleProvider('synthetic', 'test-model', BASE_URL,
+            lambda request: calls.append(request) or tool_response('clarify'))
+        provider.propose('Li minum susu bersama Bo dan A', self.now, self.zone, known_names=['Li', 'Bo', 'A'])
+        sent = json.loads(calls[0]['messages'][1]['content'])['message']
+        self.assertIn('minum susu bersama', sent)
+        self.assertNotRegex(sent, r'\b(?:Li|Bo|A)\b')
+
     def test_compatible_redacts_labeled_unknown_name_and_identity_number(self):
         calls = []
         response = tool_response('clarify')

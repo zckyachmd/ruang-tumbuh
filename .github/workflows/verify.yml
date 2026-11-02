@@ -29,6 +29,8 @@ jobs:
           cache: pip
       - run: pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -v
+      - name: Report synthetic safety routing evaluation (clinical validation pending)
+        run: PYTHONPATH=. python tests/test_safety_evaluation.py
       - run: node --check web/app.js
       - run: python -m playwright install --with-deps chromium
       - run: python tests/ui_acceptance.py
