@@ -1,5 +1,6 @@
 """Mobile/desktop acceptance against a real API and isolated PostgreSQL schema."""
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -64,10 +65,47 @@ try:
             page.get_by_role('button',name='Pertumbuhan',exact=True).click()
             expect(page.get_by_role('img',name='Tren pengukuran; nilai lengkap tersedia di daftar')).to_be_visible()
             expect(page.get_by_text('Tren catatan asli',exact=False)).to_be_visible()
+            if width == 390:
+                page.get_by_role('button',name='Pengaturan',exact=True).click()
+                page.get_by_role('button',name='Tambah anak lain',exact=True).click()
+                page.get_by_label('Nama panggilan',exact=True).fill('Bima')
+                with page.expect_response(lambda response: response.url.endswith('/children') and response.request.method == 'POST') as child_created:
+                    page.get_by_role('button',name='Simpan profil',exact=True).click()
+                assert child_created.value.status == 201
+                page.locator('#child').select_option(label='Bima')
+                page.get_by_role('button',name='Gunakan Bima untuk chat bot').click()
+                expect(page.get_by_role('status').filter(has_text='Chat bot sekarang untuk Bima')).to_be_visible()
+                page.get_by_role('button',name='Buat kode undangan',exact=True).click()
+                expect(page.locator('#invite-result')).to_contain_text('Kode:')
+                invitation=re.search(r'Kode: ([A-Za-z0-9_-]+)',page.locator('#invite-result').inner_text())[1]
+                guest=browser.new_page(viewport={'width':390,'height':844})
+                guest.route('https://telegram.org/**',lambda route:route.abort())
+                guest.goto('http://127.0.0.1:8137')
+                guest.get_by_label('ID pengguna uji').fill('10390')
+                guest.get_by_role('button',name='Masuk sebagai pengguna uji').click()
+                guest.get_by_label('Kode undangan',exact=True).fill(invitation)
+                guest.get_by_role('button',name='Gabung keluarga',exact=True).click()
+                expect(guest.get_by_role('heading',name='Catatan terbaru')).to_be_visible()
+                guest.get_by_role('button',name='Pengaturan',exact=True).click()
+                guest.get_by_role('button',name='Gunakan Alya untuk chat bot').click()
+                expect(guest.get_by_role('status').filter(has_text='Chat bot sekarang untuk Alya')).to_be_visible()
+                with psycopg.connect(dsn) as conn:
+                    selections=conn.execute('SELECT telegram_user_id,child_id FROM chat_selections ORDER BY telegram_user_id').fetchall()
+                assert len(selections)==2 and selections[0][1]!=selections[1][1]
+                guest.close()
+                print('PASS two-member two-child independent chat selection')
             page.keyboard.press('Tab')
             assert page.evaluate('document.activeElement.tagName') != 'BODY'
             assert not errors, errors
             assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'horizontal overflow'
+            with psycopg.connect(dsn) as conn:
+                conn.execute('DELETE FROM sessions WHERE telegram_user_id=%s',(width,))
+            page.get_by_role('button',name='Beranda',exact=True).click()
+            expect(page.get_by_role('alert')).to_contain_text('Sesi berakhir')
+            page.get_by_role('button',name='Coba lagi',exact=True).click()
+            page.get_by_label('ID pengguna uji').fill(str(width))
+            page.get_by_role('button',name='Masuk sebagai pengguna uji').click()
+            expect(page.get_by_role('heading',name='Catatan terbaru')).to_be_visible()
             page.close()
             print('PASS real API mobile/desktop acceptance',width)
         browser.close()

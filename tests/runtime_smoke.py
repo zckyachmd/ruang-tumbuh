@@ -4,6 +4,8 @@ import os
 import secrets
 import subprocess
 import tempfile
+from pathlib import Path
+import stat
 import urllib.request
 from datetime import datetime, timezone
 
@@ -32,13 +34,23 @@ try:
     api(path,[{'kind':'note','payload':{'text':'synthetic restore fixture'},'occurred_at':datetime.now(timezone.utc).isoformat()}],token,'runtime-fixture')
     run('up','-d','--force-recreate','--wait','--wait-timeout','120','api','worker')
     assert api(path,token=token)[0]['payload']['text']=='synthetic restore fixture'
-    dump=run('exec','-T','db','pg_dump','-U','ruang','-d','ruang','-Fc','--no-owner','--no-acl')
+    with tempfile.TemporaryDirectory(prefix='ruang-backup-test-') as temporary:
+        key=Path(temporary)/'key.txt'
+        subprocess.run(['age-keygen','-o',str(key)],check=True,capture_output=True)
+        public=subprocess.run(['age-keygen','-y',str(key)],check=True,capture_output=True,text=True).stdout.strip()
+        backup_env=dict(env,COMPOSE_PROJECT_NAME=project,BACKUP_DIR=str(Path(temporary)/'backups'),BACKUP_AGE_RECIPIENT=public)
+        subprocess.run(['bash','scripts/backup-postgres.sh'],env=backup_env,check=True,capture_output=True)
+        files=list((Path(temporary)/'backups').glob('*.dump.age'))
+        assert len(files)==1
+        assert stat.S_IMODE(files[0].stat().st_mode)==0o600
+        assert b'synthetic restore fixture' not in files[0].read_bytes()
+        dump=subprocess.run(['age','--decrypt','-i',str(key),str(files[0])],check=True,capture_output=True).stdout
     run('exec','-T','db','createdb','-U','ruang','restored')
     run('exec','-T','db','pg_restore','-U','ruang','-d','restored','--no-owner','--no-acl',input=dump)
     before=run('exec','-T','db','psql','-U','ruang','-d','ruang','-Atc','SELECT payload::text FROM events ORDER BY id')
     after=run('exec','-T','db','psql','-U','ruang','-d','restored','-Atc','SELECT payload::text FROM events ORDER BY id')
     assert before==after
     assert b'synthetic restore fixture' not in dump
-    print('PASS container recreate persistence and PostgreSQL encrypted-column backup/restore')
+    print('PASS container recreate persistence and actual age backup script/restore (ciphertext mode 0600)')
 finally:
     run('down','-v','--remove-orphans')

@@ -16,6 +16,7 @@ class SafetyRoutingTests(unittest.TestCase):
             ('nggak mengalami kejang',None), ('kenapa bayi tersedak','health_boundary'),
             ('berapa dosis obat','health_boundary'), ('napasnya normal atau tidak','health_boundary'),
             ('ringkasan hari ini',None), ('catat tersedak kemarin',None), ('jam 9 ASIP 60 ml',None),
+            ('apakah data anak aman?',None), ('nafasnya cepat kenapa','health_boundary'),
         ]
         for text, expected in cases:
             with self.subTest(text=text):self.assertEqual(route(text),expected)

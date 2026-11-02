@@ -23,7 +23,7 @@ def route(text):
                 r'\bkejang\b', r'\bbibir(?:nya)?\b.{0,25}\b(?:biru|kebiruan)\b', r'\b(?:blue lips|not breathing|unconscious)\b')
     if any(re.search(pattern, normalized) for pattern in patterns):
         return 'emergency'
-    if not re.search(r'\b(catat|simpan|ringkasan|riwayat|terakhir)\b', normalized) and re.search(
-            r'\b(tersedak|demam|sakit|dosis|obat|nafas|napas|bernapas|bernafas|normal|aman)\b', normalized):
+    if not re.search(r'\b(catat|simpan|ringkasan|riwayat|terakhir|data|akun|privasi|keamanan)\b', normalized) and re.search(
+            r'\b(tersedak|demam|sakit|dosis|obat|nafas(?:nya)?|napas(?:nya)?|bernapas|bernafas)\b|\b(?:bayi|anak)\b.{0,35}\b(?:normal|aman)\b', normalized):
         return 'health_boundary'
     return None

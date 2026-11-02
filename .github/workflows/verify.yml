@@ -40,7 +40,10 @@ jobs:
           APP_DOMAIN: synthetic.invalid
         run: docker compose -f compose.yaml -f compose.hosted.yaml config --quiet
       - name: Container persistence and database restore
-        run: python tests/runtime_smoke.py
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y age
+          python tests/runtime_smoke.py
   who-reference:
     runs-on: ubuntu-latest
     timeout-minutes: 10

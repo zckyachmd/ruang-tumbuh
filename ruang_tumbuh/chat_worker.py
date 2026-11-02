@@ -94,6 +94,8 @@ def _process_claimed(store, provider, row, token):
                     return True
         safety = safety_route(text)
         command = re.fullmatch(r'/([a-z]+)(?:@\w+)?(?:\s+(.+))?', text.strip(), flags=re.IGNORECASE)
+        if command and command.group(1).lower() in ('daftar','undang','pilih','keluarga','ai','start'):
+            safety = None
         if safety:
             response = EMERGENCY_MESSAGE if safety == 'emergency' else HEALTH_MESSAGE
             draft = False
