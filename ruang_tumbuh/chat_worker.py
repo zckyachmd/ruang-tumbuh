@@ -14,7 +14,7 @@ from .safety import route as safety_route, EMERGENCY_MESSAGE, HEALTH_MESSAGE
 from .agent import FakeProvider, OpenAICompatibleProvider, ProviderError, ai_consent_scope, render_event
 from .store import Denied, Invalid, Store
 from .conversation import named_children, load_context, save_context, merge_clarification, clarification_question
-from .admission import reserve_ai, BudgetExceeded
+from .admission import reserve_ai, observe_provider, BudgetExceeded
 from .queries import query_records
 from .mutations import propose_change, confirm_change
 from .reminders import list_reminders
@@ -316,15 +316,15 @@ def _process_claimed(store, provider, row, token):
                             result = {'kind':'education', 'message': local_education or 'Perbandingan WHO tersedia hanya dari kalkulasi backend yang tervalidasi. Buka Pertumbuhan di Mini App untuk status dan catatan pengukuran; saya tidak mengirim hasil WHO ke AI eksternal.'}
                         elif getattr(provider, 'requires_consent', False):
                             with store.connect() as conn:
-                                reserve_ai(conn, family, user, update_id)
+                                reservation = reserve_ai(conn, family, user, update_id)
                                 store._access(conn, family, user)
                                 consent = conn.execute("SELECT enabled,provider_scope FROM ai_processing_consents WHERE family_id=%s AND telegram_user_id=%s", (family, user)).fetchone()
                                 if not (consent and consent[0] and consent[1] == ai_consent_scope()):
                                     raise AIDisabled()
                             selected_profile = next(child for child in children if child[0] == selected_child)
-                            result = provider.propose(provider_text, received_at, zone,
+                            result = observe_provider(store, reservation, lambda: provider.propose(provider_text, received_at, zone,
                                 known_names=[selection[2], *(child[1] for child in children)],
-                                known_birth_dates=[selected_profile[2]])
+                                known_birth_dates=[selected_profile[2]]))
                             usage = result.get('usage')
                         else:
                             result = provider.propose(text, received_at, zone)

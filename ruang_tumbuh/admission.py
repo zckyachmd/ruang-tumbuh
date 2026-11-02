@@ -1,6 +1,8 @@
 """Operator admission and atomic request budgets, independent of data consent."""
 
 import os
+import logging
+import time
 
 
 class BudgetExceeded(Exception):
@@ -55,4 +57,27 @@ def reserve_ai(conn, family, user, update_id):
         count = conn.execute("SELECT count(*) FROM ai_reservations WHERE reserved_at>now()-interval '" + interval + "'" + clause, params).fetchone()[0]
         if count >= limit:
             raise BudgetExceeded()
-    conn.execute('INSERT INTO ai_reservations(update_id,family_id,telegram_user_id) VALUES (%s,%s,%s)', (update_id, family, user))
+    return conn.execute('INSERT INTO ai_reservations(update_id,family_id,telegram_user_id) VALUES (%s,%s,%s) RETURNING id', (update_id, family, user)).fetchone()[0]
+
+
+def observe_provider(store, reservation, call):
+    """Record only an outcome and duration; metrics failure must not replay a call."""
+    from .agent import ProviderError
+    started = time.monotonic()
+    outcome = 'internal_error'
+    try:
+        result = call()
+        outcome = 'succeeded'
+        return result
+    except ProviderError:
+        outcome = 'provider_error'
+        raise
+    finally:
+        elapsed = max(0, round((time.monotonic() - started) * 1000))
+        try:
+            with store.connect() as conn:
+                conn.execute("UPDATE ai_reservations SET outcome=%s,latency_ms=%s,finished_at=now() WHERE id=%s AND outcome='reserved'",
+                             (outcome, elapsed, reservation))
+        except Exception:
+            # No exception details: transport errors can contain connection secrets.
+            logging.error('AI observation write failed; reservation outcome remains unobserved')

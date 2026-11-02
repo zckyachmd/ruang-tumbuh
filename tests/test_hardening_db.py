@@ -78,6 +78,39 @@ class HardeningDatabaseTests(unittest.TestCase):
         self.enqueue(f'simpan {proposal}');process_one(self.store)
         self.assertEqual(len(self.store.timeline(self.family,self.user,self.child)),1)
 
+    def test_provider_outcomes_and_delivery_metrics_use_actual_database(self):
+        from ruang_tumbuh.agent import ProviderError, ai_consent_scope
+        from ruang_tumbuh.healthcheck import snapshot
+        self.store.set_ai_consent(self.family, self.user, True, ai_consent_scope())
+
+        class Provider:
+            requires_consent = True
+            fail = False
+
+            def propose(self, *args, **kwargs):
+                if self.fail:
+                    raise ProviderError('synthetic failure')
+                return {'kind': 'clarify'}
+
+        provider = Provider()
+        for fail, expected in ((False, 'succeeded'), (True, 'provider_error')):
+            provider.fail = fail
+            update = self.enqueue('ASIP 60 ml')
+            process_one(self.store, provider)
+            with self.store.connect() as conn:
+                row = conn.execute('SELECT outcome,latency_ms,finished_at FROM ai_reservations WHERE update_id=%s', (update,)).fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual(row[0], expected)
+                self.assertGreaterEqual(row[1], 0)
+                self.assertIsNotNone(row[2])
+                conn.execute("UPDATE chat_outbox o SET status='sent',finished_at=u.received_at+interval '12 seconds' FROM inbound_updates u WHERE o.update_id=u.update_id AND o.update_id=%s", (update,))
+        metrics = snapshot(self.store)
+        self.assertGreaterEqual(metrics['provider_outcomes_last_day']['succeeded'], 1)
+        self.assertGreaterEqual(metrics['provider_outcomes_last_day']['provider_error'], 1)
+        self.assertGreaterEqual(metrics['provider_latency_p95_ms'], 0)
+        self.assertIsNotNone(metrics['telegram_delivery_lag_p95_seconds'])
+        self.assertNotIn('Synthetic', str(metrics))
+
     def test_corrupt_inbound_does_not_block_next_job(self):
         bad = self.enqueue('bad')
         with self.store.connect() as conn:
