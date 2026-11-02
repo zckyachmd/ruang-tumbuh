@@ -17,7 +17,7 @@ def propose_change(store, family, user, child, proposal, context):
         record = records[number-1]
         change = {'operation': proposal['operation'], 'event_id': record['id'], 'version': record['version'], 'kind': record['kind']}
         if change['operation'] == 'edit':
-            payload = proposal['payload'] if proposal['payload'] is not None else record['payload']
+            payload = {**record['payload'], **proposal['payload']} if proposal['payload'] is not None else record['payload']
             instant = proposal['occurred_at'] or record['occurred_at']
             occurred = datetime.fromisoformat(instant)
             if occurred.utcoffset() is None or not validate(record['kind'], payload) or not valid_time(record['kind'], payload, occurred):

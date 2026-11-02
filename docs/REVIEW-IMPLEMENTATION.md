@@ -1,0 +1,70 @@
+# Review implementation and release evidence
+
+Baseline: `082f35c5df0522c25889a60d83b31d291e9e5476`. Work is tracked by issue #1 and PR #15. Main has not been changed by this work.
+
+## Implementation map
+
+| Issue | Change | Verification |
+|---|---|---|
+| #2 | Resolve known child names locally; reject conflicts/duplicate names; name the selected child in responses; bind confirmation to child | Unit child-name isolation and actual PostgreSQL cross-child confirmation regression |
+| #3 | Encrypted per-user/family/child clarification context, 30-minute expiry, bounded merge; ask for missing time/date | Deterministic round trip and PostgreSQL propose/confirm/repeat regression |
+| #4 | Notification daily quota scoped to kind | PostgreSQL sends check-in and summary with both limits set to one |
+| #5 | Explicit HTTP 429 → bounded retry honoring retry_after, retain response until retry; transport timeout remains uncertain | HTTP sender unit tests and PostgreSQL outbox retry regression |
+| #6 | Natural-language previews capped by UTF-16 units; 20-item batch fits one Telegram message; inline confirm/cancel buttons | Worst-case Unicode batch unit test; callback identity/action validation |
+| #7 | Production creator allowlist, admitted AI families, rolling request limits, global pause and inbound backpressure | Default-deny unit test and concurrent PostgreSQL global reservation test |
+| #8 | Decode/validate inside per-job exception boundary | Corrupt row followed by valid row in PostgreSQL; provider never invoked on corrupt input |
+| #9 | Stable oldest-message order per user plus session advisory lock across commits/network calls | PostgreSQL locked-user/two-worker selection-before-record regression |
+| #10 | Family-scoped keyed lookup tokens for diaper categories and LIMIT 1 lookup | 50k newer pee rows + older poop fixture; EXPLAIN must use events_lookup |
+| #11 | Period query tools, numbered candidates, versioned edit/delete proposals, reminder create/list/cancel, source-free natural renderer, Mini App reminder/delivery controls | Tool validation, PostgreSQL range/edit/idempotency tests; browser suite covers selected flows |
+| #12 | Permission ID 202611419 recorded; metadata-only public manifest; protected server loader, checksum validation and deterministic LMS; raw trends and comparison status | CI verifies every official SD column across ten workbook assets, then tests loader and selected boundary cases; production comparison still needs a reviewed validation record |
+| #13 | Local bounded source registry; WHO topics/results never sent to external classifier; unsupported clinical queries refused | Static-response injection/refusal unit tests; full clinical/language review is still outstanding |
+| #14 | PostgreSQL CI, Docker build/Compose parse, browser mobile/desktop acceptance, container recreate/DB restore suite; heartbeat and content-free metrics | CI is authoritative; live Telegram/provider, public TLS and clinical acceptance remain separate operational gates |
+
+## Evidence and limitations
+
+Initial CI run at `d5c3bef` passed **80 tests** with PostgreSQL 16, built the runtime image, and parsed production Compose. The expanded run at `c8d2ce4` passed **82 tests**, including the 50k lookup/index regression. Its WHO job passed **94,822 numerical checks** against ten checksum-pinned official workbooks. The browser test discovered an implicit-label accessibility problem; labels were changed to explicit `for`/`id` associations and the browser suite is rerun on subsequent commits.
+
+The source runner could not install PostgreSQL or dependencies because its package access was restricted. Actual database/build verification therefore runs on GitHub Actions, not a mock database. The added Docker smoke test verifies a synthetic encrypted-column dump/restore; it does not certify production key custody, host encryption, the operator's scheduled `age` backups, or disaster-recovery procedures.
+
+Permission has been granted. It does not supply live provider credentials, prove clinical correctness, or approve future commercial distribution. The private permission letter and licensed workbooks are not public artifacts.
+
+## Operator setup
+
+1. Set `APP_ENV=production`, `DEV_AUTH_ENABLED=0`, strong database password and a separately backed-up `APP_DATA_ENCRYPTION_KEY`.
+2. Set `FAMILY_CREATOR_IDS` to the Telegram IDs allowed to create families. After provisioning, set `AI_FAMILY_IDS` for families allowed to use operator-funded AI; each member still separately consents. Existing families are not implicitly admitted to external AI on upgrade.
+3. Set request budgets to the provider cost model: global/family rolling 24-hour request count, per-user rolling minute count, `max_tokens=1000` per completion. These are request caps, not currency accounting. Reservations remain consumed after failed/uncertain requests to avoid runaway retry costs. `AI_PAUSED=1` stops new model requests.
+4. Use either polling or webhook, enable actual delivery separately, and configure the Mini App HTTPS URL. Configure Telegram webhook allowed updates for both `message` and `callback_query` if webhook transport is selected. Draft callbacks carry no authority beyond the authenticated user's accessible draft.
+5. Run migrations before starting writers. Context and change drafts expire after 30 minutes; AI creation drafts expire after 24 hours. Confirmation is bound to user, family, child, expiry and version. Switching child requires re-selecting the original profile before confirming an old draft.
+6. Read [WHO licence status](WHO-license-status.md) before installing protected reference assets. Leave comparison disabled until the validation record is reviewed; raw measurement trends work independently. The chat worker has no workbook mount.
+
+Lookup tokens are HMAC-derived from a domain-separated data key and include the family ID. Database observers can still correlate equal diaper categories within one family; they do not receive plaintext subtype values or cross-family matching tokens. Key rotation recomputes lookup tokens in the same transaction as ciphertext rotation. Back up first and stop all writers during rotation.
+
+## Run verification
+
+With an isolated PostgreSQL database, install `requirements-dev.txt`, set `TEST_DATABASE_URL`, a synthetic `APP_DATA_ENCRYPTION_KEY`, and `APP_ENV=development`:
+
+```bash
+python -m unittest discover -s tests -v
+python -m playwright install --with-deps chromium
+python tests/ui_acceptance.py
+python tests/runtime_smoke.py
+```
+
+The runtime smoke test creates its own Compose project and deletes only that project's synthetic volumes afterwards. It requires Docker and a free localhost port 8147. Browser tests create/drop an isolated schema and use localhost port 8137.
+
+WHO reference checks run on a protected temporary server directory and delete assets afterwards; never upload that directory as an artifact:
+
+```bash
+python scripts/install-who-data.py /protected/who-data
+python scripts/validate-who-reference.py /protected/who-data
+```
+
+Numerical success writes `numerical-validation.json`; it does not silently create a production approval record. Review outputs, applicability and display before creating the operator validation record described in WHO-license-status.md.
+
+## Health and recovery
+
+`docker compose exec worker python -m ruang_tumbuh.healthcheck --metrics` returns only heartbeat age, queue/outbox status counts, oldest pending age and AI reservation count. Alert on absent/stale heartbeat, growing queue age and failed/uncertain delivery. Set thresholds from measured deployment behavior; no latency SLO is asserted here.
+
+An explicit 429 is retried up to five attempts. An unknown delivery outcome is not automatically resent. Mini App Settings shows recent personal delivery status. Inspect the record timeline before re-entering an activity whose acknowledgement was not received. A failed notification does not establish that an activity was absent or that a child is safe.
+
+Do not close the release tracker solely on green synthetic CI: two-parent live Telegram/provider acceptance, public TLS, production backup/key recovery and any clinical claims need their own evidence. Clinical treatment, diagnosis and unrestricted medical answers are not implemented.

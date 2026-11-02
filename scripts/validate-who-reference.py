@@ -2,12 +2,13 @@
 
 import json
 import re
+import os
 import sys
 from pathlib import Path
 from openpyxl import load_workbook
 
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
-from ruang_tumbuh.growth import lms_zscore, load_reference
+from ruang_tumbuh.growth import lms_zscore, load_reference, compare, GrowthUnavailable
 
 directory=Path(sys.argv[1])
 manifest=json.loads((Path(__file__).resolve().parent.parent/'docs/who-assets.json').read_text())
@@ -40,6 +41,32 @@ for asset in manifest:
                     raise AssertionError('LMS disagrees with official SD column beyond rounding tolerance: '+asset['filename'])
                 checks+=1
     finally:workbook.close()
+# A temporary authorization fixture exercises the production loader and boundary logic.
+# It is deleted immediately and is never a production approval record.
+temporary = directory/'validation.json'
+if temporary.exists():
+    raise SystemExit('Refusing to overwrite an operator validation record')
+temporary.write_text(json.dumps({'status':'approved','reviewer':'CI test authorization only',
+    'independent_fixture_report':'official SD-column numerical suite', 'asset_sha256':[item['sha256'] for item in manifest]}))
+os.environ['WHO_COMPARISON_ENABLED']='1'
+os.environ['WHO_DATA_DIR']=str(directory)
+try:
+    for asset in manifest:
+        entry,data=load_reference(asset['indicator'],asset['sex'])
+        axes = [value for value in (0,1,730,731,1856) if value in data] if asset['indicator'] not in ('wfl','wfh') else [min(data),sorted(data)[len(data)//2],max(data)]
+        for axis in axes:
+            age = (100 if asset['indicator']=='wfl' else 800) if asset['indicator'] in ('wfl','wfh') else int(axis)
+            position = 'recumbent' if age<=730 else 'standing'
+            result=compare(asset['indicator'],asset['sex'],age,data[axis][1],position=position,length_cm=axis if asset['indicator'] in ('wfl','wfh') else None)
+            assert abs(result['z_score'])<=.001
+            checks+=1
+        try:compare(asset['indicator'],asset['sex'],1857,1,position='standing')
+        except GrowthUnavailable:pass
+        else:raise AssertionError('Age boundary was not enforced')
+finally:
+    temporary.unlink()
+    os.environ.pop('WHO_COMPARISON_ENABLED',None)
+    os.environ.pop('WHO_DATA_DIR',None)
 record={'status':'numeric_validated','checks':checks,'asset_sha256':[item['sha256'] for item in manifest],
         'method':'independent official published SD column versus LMS implementation, tolerance 0.015 z',
         'remaining':'position conversions/off-grid interpolation withheld; human review and display acceptance still required'}

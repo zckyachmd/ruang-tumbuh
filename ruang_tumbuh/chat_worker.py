@@ -321,7 +321,7 @@ def _process_claimed(store, provider, row, token):
                     response = 'Selamat datang. Buat atau pilih keluarga dan profil anak melalui Mini App.'
                 elif result['kind'] == 'query_records':
                     response, records = query_records(store, family, user, selected_child, result['mode'], result['start_date'], result['end_date'])
-                    next_context = {'kind':'records', 'records':records}
+                    next_context = {'kind':'records', 'records':records} if result['mode'] != 'summary' else None
                 elif result['kind'] == 'list_reminders':
                     reminders = list_reminders(store, family, user)[:10]
                     next_context = {'kind':'reminders', 'reminders':[row[0] for row in reminders]}
