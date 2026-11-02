@@ -1,6 +1,6 @@
 # Ruang Tumbuh
 
-**Status: implementasi review tersedia di PR #15; release belum dinyatakan siap untuk data keluarga nyata.** Core database/build telah diuji melalui CI. Live Telegram/provider, hosting TLS, pengelolaan kunci dan acceptance klinis tetap perlu bukti. Lihat [peta implementasi dan runbook](docs/REVIEW-IMPLEMENTATION.md).
+**Status: PR #15 sudah merged ke `main` pada `825452f`; release belum dinyatakan siap untuk data keluarga nyata.** Core database/build telah diuji melalui CI. Live Telegram/provider, hosting TLS, pengelolaan kunci dan acceptance klinis tetap perlu bukti. Lihat [peta implementasi dan runbook](docs/REVIEW-IMPLEMENTATION.md).
 
 Backend menggunakan Python/FastAPI dan PostgreSQL; proses migrasi dan worker berjalan terpisah. Pilihan ini menjaga satu basis kode dan transaksi database. Agent dan parser chat masih terbatas; rencana dan gap tersedia di [IMPLEMENTATION.md](IMPLEMENTATION.md). Referensi WHO dinonaktifkan sampai data dan perhitungan tervalidasi; lihat [catatan validasi, sumber, dan lisensi WHO](docs/WHO-growth-validation.md).
 
