@@ -1,0 +1,12 @@
+.git
+.env
+.venv
+__pycache__
+*.pyc
+*.dump
+*.backup
+*.age
+*.csv
+*.sql.gz
+tests
+PRD.txt

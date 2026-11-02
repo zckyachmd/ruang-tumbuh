@@ -1,0 +1,85 @@
+x-db-url: &database_url postgresql://ruang:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/ruang
+x-base-environment: &base_environment
+  DATABASE_URL: *database_url
+  APP_DATA_ENCRYPTION_KEY: ${APP_DATA_ENCRYPTION_KEY:?Set APP_DATA_ENCRYPTION_KEY in .env}
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ruang
+      POSTGRES_DB: ruang
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ruang -d ruang"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  migrate:
+    build: .
+    command: ["python", "-m", "ruang_tumbuh.migrate"]
+    environment: *base_environment
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: on-failure
+  api:
+    build: .
+    environment:
+      <<: *base_environment
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      APP_ENV: ${APP_ENV:-production}
+      DEV_AUTH_ENABLED: ${DEV_AUTH_ENABLED:-0}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      TELEGRAM_TRANSPORT: ${TELEGRAM_TRANSPORT:-disabled}
+      AI_PROVIDER: ${AI_PROVIDER:-fake}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MODEL: ${AI_MODEL:-}
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+  worker:
+    build: .
+    command: ["python", "-m", "ruang_tumbuh.chat_worker"]
+    environment:
+      <<: *base_environment
+      APP_ENV: ${APP_ENV:-production}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DELIVERY: ${TELEGRAM_DELIVERY:-disabled}
+      CHAT_CONTENT_RETENTION_DAYS: ${CHAT_CONTENT_RETENTION_DAYS:-7}
+      AI_PROVIDER: ${AI_PROVIDER:-fake}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 30s
+  telegram-poller:
+    profiles: ["polling"]
+    build: .
+    command: ["python", "-m", "ruang_tumbuh.telegram_polling"]
+    environment:
+      <<: *base_environment
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_TRANSPORT: ${TELEGRAM_TRANSPORT:-disabled}
+      TELEGRAM_POLL_TIMEOUT: ${TELEGRAM_POLL_TIMEOUT:-30}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 45s
+volumes:
+  postgres_data:
