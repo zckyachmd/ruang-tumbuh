@@ -57,7 +57,10 @@ try:
             page.get_by_label('Jenis aktivitas').select_option('growth')
             page.get_by_label('Pengukuran',exact=True).select_option('weight')
             page.get_by_label('Nilai',exact=True).fill('4.2')
-            page.get_by_role('button',name='Simpan catatan',exact=True).click()
+            with page.expect_response(lambda response: '/events-local' in response.url and response.request.method == 'POST') as saved:
+                page.get_by_role('button',name='Simpan catatan',exact=True).click()
+            assert saved.value.status == 201, saved.value.text()
+            expect(page.get_by_role('heading',name='Timeline',exact=True)).to_be_visible()
             page.get_by_role('button',name='Pertumbuhan',exact=True).click()
             expect(page.get_by_role('img',name='Tren pengukuran; nilai lengkap tersedia di daftar')).to_be_visible()
             expect(page.get_by_text('Tren catatan asli',exact=False)).to_be_visible()

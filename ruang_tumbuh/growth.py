@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+from functools import lru_cache
 
 
 class GrowthUnavailable(ValueError):
@@ -18,7 +19,11 @@ class GrowthUnavailable(ValueError):
 def lms_zscore(value, l, m, s, *, weight_based=False):
     if not all(type(x) in (int, float) and math.isfinite(x) for x in (value, l, m, s)) or min(value, m, s) <= 0:
         raise ValueError('Invalid LMS input')
-    z = math.log(value/m)/s if l == 0 else math.expm1(l*math.log(value/m))/(l*s)
+    try:
+        log_ratio = math.log(value)-math.log(m)
+        z = log_ratio/s if l == 0 else math.expm1(l*log_ratio)/(l*s)
+    except (ValueError, OverflowError, ZeroDivisionError) as exc:
+        raise ValueError('Measurement outside numerical comparison range') from exc
     if weight_based and abs(z) > 3:
         def at(sd):
             return m*math.exp(s*sd) if l == 0 else m*(1+l*s*sd)**(1/l)
@@ -41,7 +46,15 @@ def load_reference(indicator, sex):
     if record.get('status') != 'approved' or not record.get('reviewer') or not record.get('independent_fixture_report') or entry['sha256'] not in record.get('asset_sha256', []):
         raise GrowthUnavailable('Validasi independen dataset belum lengkap.')
     path = directory/entry['filename']
-    if hashlib.sha256(path.read_bytes()).hexdigest() != entry['sha256']:
+    stat = path.stat()
+    data = _load_table(str(path), entry['sha256'], stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+    return entry, data
+
+
+@lru_cache(maxsize=10)
+def _load_table(filename, expected_sha256, _mtime, _ctime, _size):
+    path = Path(filename)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha256:
         raise GrowthUnavailable('Checksum dataset tidak cocok.')
     from openpyxl import load_workbook
     workbook = load_workbook(path, read_only=True, data_only=True)
@@ -59,7 +72,7 @@ def load_reference(indicator, sex):
             raise GrowthUnavailable('Sumbu dataset belum dikenali.')
         indexes = [columns.index(key), *(columns.index(name) for name in ('L', 'M', 'S'))]
         data = {float(row[indexes[0]]): tuple(float(row[index]) for index in indexes[1:]) for row in rows if row[indexes[0]] is not None}
-        return entry, data
+        return data
     finally:
         workbook.close()
 

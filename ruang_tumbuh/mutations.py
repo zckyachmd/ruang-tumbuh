@@ -24,6 +24,20 @@ def propose_change(store, family, user, child, proposal, context):
                 raise Invalid()
             change.update(payload=payload, occurred_at=instant)
         return change
+    if proposal['operation'] == 'preferences':
+        from .checkins import get_preferences, validate_kind_settings
+        pref_kind = proposal['notification_kind']
+        old = get_preferences(store,family,user,pref_kind)
+        if proposal['enabled'] and old['settings'] is None and proposal['time'] is None and pref_kind != 'reminder':
+            return None
+        settings = dict(old['settings'] or {'time':'09:00','timezone':store.family_timezone(family,user),
+            'quiet_start':None,'quiet_end':None,'snoozed_until':None,'max_daily':5 if pref_kind=='reminder' else 1})
+        for key in ('time','quiet_start','quiet_end','max_daily'):
+            if proposal[key] is not None:settings[key]=proposal[key]
+        if proposal['clear_quiet_hours']:settings.update(quiet_start=None,quiet_end=None)
+        if pref_kind=='daily_summary':settings['child_id']=child
+        validate_kind_settings(pref_kind,settings)
+        return {'operation':'preferences','notification_kind':pref_kind,'enabled':proposal['enabled'],'settings':settings,'expected':old}
     if proposal['operation'] == 'reminder':
         return {'operation': 'reminder', 'body': proposal['body'], 'due_at': proposal['due_at'], 'bypass_quiet_hours': proposal['bypass_quiet_hours']}
     if proposal['operation'] == 'cancel_reminder':
@@ -61,6 +75,14 @@ def confirm_change(store, family, user, child, draft_id, cancel=False):
             else:
                 conn.execute('UPDATE events SET deleted_at=now(),updated_at=now(),version=version+1 WHERE id=%s', (change['event_id'],))
             conn.execute("INSERT INTO audit_log(family_id,actor_id,action,entity_type,entity_id) VALUES (%s,%s,%s,'event',%s)", (family, user, op, change['event_id']))
+        elif op == 'preferences':
+            from .checkins import set_preferences_in_transaction
+            pref_kind=change['notification_kind']
+            row=conn.execute('SELECT enabled,settings FROM notification_preferences WHERE family_id=%s AND telegram_user_id=%s AND kind=%s', (family,user,pref_kind)).fetchone()
+            current={'enabled':row[0],'settings':store.data_cipher.open_json(row[1],'notification_preferences.settings')} if row else {'enabled':False,'settings':None}
+            if current!=change['expected']:
+                raise Conflict()
+            set_preferences_in_transaction(conn,store,family,user,change['enabled'],change['settings'],pref_kind)
         elif op == 'reminder':
             now = datetime.now(timezone.utc)
             due = datetime.fromisoformat(change['due_at'])

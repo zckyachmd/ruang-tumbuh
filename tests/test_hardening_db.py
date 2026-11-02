@@ -24,6 +24,7 @@ from ruang_tumbuh.delivery import deliver_one, RetryAfter
 from ruang_tumbuh.checkins import set_preferences, schedule_today, deliver_checkin
 from ruang_tumbuh.admission import reserve_ai, BudgetExceeded
 from ruang_tumbuh.mutations import confirm_change
+from ruang_tumbuh.mutations import propose_change
 from ruang_tumbuh.queries import query_records
 
 
@@ -182,3 +183,22 @@ class HardeningDatabaseTests(unittest.TestCase):
         self.assertEqual(found[1],{'type':'pup'})
         self.store.update_event(self.family,self.user,poop,1,{'type':'pipis'},at)
         self.assertIsNone(self.store.last_event(self.family,self.user,self.child,'poop',datetime.now(timezone.utc)))
+
+    def test_preference_proposal_requires_confirmation_and_checks_staleness(self):
+        from ruang_tumbuh.checkins import get_preferences
+        from ruang_tumbuh.store import Conflict
+        proposal={'operation':'preferences','notification_kind':'checkin','enabled':True,'time':'13:00',
+                  'quiet_start':None,'quiet_end':None,'max_daily':1,'clear_quiet_hours':False}
+        change=propose_change(self.store,self.family,self.user,self.child,proposal,None)
+        self.assertFalse(get_preferences(self.store,self.family,self.user)['enabled'])
+        draft=self.enqueue('synthetic preference proposal')
+        with self.store.connect() as conn:
+            conn.execute('INSERT INTO chat_mutations(update_id,family_id,child_id,telegram_user_id,content) VALUES (%s,%s,%s,%s,%s)',
+                         (draft,self.family,self.child,self.user,self.store.data_cipher.seal_json(change,'chat_mutations.content')))
+        confirm_change(self.store,self.family,self.user,self.child,draft)
+        self.assertTrue(get_preferences(self.store,self.family,self.user)['enabled'])
+        stale=self.enqueue('synthetic stale proposal')
+        with self.store.connect() as conn:
+            conn.execute('INSERT INTO chat_mutations(update_id,family_id,child_id,telegram_user_id,content) VALUES (%s,%s,%s,%s,%s)',
+                         (stale,self.family,self.child,self.user,self.store.data_cipher.seal_json(change,'chat_mutations.content')))
+        with self.assertRaises(Conflict):confirm_change(self.store,self.family,self.user,self.child,stale)

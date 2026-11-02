@@ -70,6 +70,12 @@ TOOLS = [
     tool('manage_reminder', 'Propose a reminder or cancel a numbered reminder from the last reminder listing; list reads only. Creation requires the user to enable reminder preferences in Mini App first. Do not infer quiet-hour bypass.',
          {'operation': {'type':'string','enum':['reminder','cancel_reminder','list']}, 'candidate': {'type':['integer','null']},
           'body': {'type':['string','null']}, 'due_at': {'type':['string','null']}, 'bypass_quiet_hours': {'type':'boolean'}}, ['operation','candidate','body','due_at','bypass_quiet_hours']),
+    tool('get_notification_preferences', 'Read the current user notification preferences.', {}, []),
+    tool('set_notification_preferences', 'Propose a personal notification setting change, always confirmed first. Null fields retain existing settings. For a first enabled check-in or summary, ask for a time. Do not clear quiet hours without explicit request.',
+         {'notification_kind':{'type':'string','enum':['checkin','daily_summary','reminder']}, 'enabled':{'type':'boolean'},
+          'time':{'type':['string','null']}, 'quiet_start':{'type':['string','null']}, 'quiet_end':{'type':['string','null']},
+          'max_daily':{'type':['integer','null']}, 'clear_quiet_hours':{'type':'boolean'}},
+         ['notification_kind','enabled','time','quiet_start','quiet_end','max_daily','clear_quiet_hours']),
     tool('clarify', 'Request clarification when intent, time, date or values are uncertain.', {}, []),
     tool('out_of_scope', 'Refuse medical advice, diagnosis, treatment, WHO interpretation, and topics outside app records.', {}, []),
 ]
@@ -198,6 +204,19 @@ class OpenAICompatibleProvider:
             args = strict_json(function['arguments'])
             if not isinstance(args, dict):
                 raise ValueError()
+            if name == 'get_notification_preferences' and args == {}:
+                return with_usage({'kind':'notification_preferences'})
+            if name == 'set_notification_preferences' and set(args) == {'notification_kind','enabled','time','quiet_start','quiet_end','max_daily','clear_quiet_hours'}:
+                if args['notification_kind'] not in ('checkin','daily_summary','reminder') or type(args['enabled']) is not bool or type(args['clear_quiet_hours']) is not bool:
+                    raise ValueError()
+                if args['max_daily'] is not None and (type(args['max_daily']) is not int or not 1 <= args['max_daily'] <= 20):
+                    raise ValueError()
+                for key in ('time','quiet_start','quiet_end'):
+                    if args[key] is not None and (not isinstance(args[key],str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', args[key])):
+                        raise ValueError()
+                if args['clear_quiet_hours'] and 'hapus jam tenang' not in text.lower():
+                    return with_usage({'kind':'clarify'})
+                return with_usage({'kind':'request_change','operation':'preferences',**args})
             if name == 'query_records' and set(args) == {'mode','start_date','end_date'}:
                 start, end = date.fromisoformat(args['start_date']), date.fromisoformat(args['end_date'])
                 if args['mode'] not in ('summary','timeline','growth') or not 0 <= (end-start).days <= 30 or end > received_at.astimezone(zone).date():
@@ -237,6 +256,8 @@ class OpenAICompatibleProvider:
                 return with_usage({'kind': name, 'category': args['category']})
             if name != 'create_events' or set(args) != {'events'} or not isinstance(args['events'], list) or not 1 <= len(args['events']) <= 20:
                 raise ValueError()
+            if re.search(r'\?|\b(apa|apakah|kapan|berapa|bolehkah|rencana|nanti|besok|akan)\b', text, re.IGNORECASE):
+                return with_usage({'kind':'clarify'})
             events = []
             for event in args['events']:
                 if not isinstance(event, dict) or set(event) != {'kind', 'occurred_at', 'payload_json'} or not isinstance(event['payload_json'], str):

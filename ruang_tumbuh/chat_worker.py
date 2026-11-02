@@ -18,6 +18,7 @@ from .admission import reserve_ai, BudgetExceeded
 from .queries import query_records
 from .mutations import propose_change, confirm_change
 from .reminders import list_reminders
+from .checkins import get_preferences
 from .store import Conflict
 from .knowledge import answer as education_answer, licensed_query
 
@@ -319,6 +320,9 @@ def _process_claimed(store, provider, row, token):
                     response = education_answer(text) or 'Aku membantu mencatat dan mencari riwayat keluarga. Aku tidak memberi diagnosis, saran perawatan, dosis, atau tafsiran WHO. Untuk kekhawatiran kesehatan, hubungi tenaga kesehatan; untuk keadaan darurat, cari layanan gawat darurat setempat.'
                 elif result['kind'] == 'start':
                     response = 'Selamat datang. Buat atau pilih keluarga dan profil anak melalui Mini App.'
+                elif result['kind'] == 'notification_preferences':
+                    preferences = [(kind,get_preferences(store,family,user,kind)) for kind in ('checkin','daily_summary','reminder')]
+                    response = 'Preferensi notifikasi pribadimu:\n' + '\n'.join(f"{kind}: {'aktif' if pref['enabled'] else 'nonaktif'}" + (f" · {pref['settings']['time']} {pref['settings']['timezone']} · batas {pref['settings']['max_daily']}/hari · jam tenang {pref['settings']['quiet_start'] or '-'}–{pref['settings']['quiet_end'] or '-'}" if pref['settings'] else '') for kind,pref in preferences)
                 elif result['kind'] == 'query_records':
                     response, records = query_records(store, family, user, selected_child, result['mode'], result['start_date'], result['end_date'])
                     next_context = {'kind':'records', 'records':records} if result['mode'] != 'summary' else None
@@ -329,10 +333,12 @@ def _process_claimed(store, provider, row, token):
                 elif result['kind'] == 'request_change':
                     proposed_change = propose_change(store, family, user, selected_child, result, pending_context)
                     if proposed_change is None:
-                        response = 'Saya perlu daftar terbaru agar tidak salah mengubah. Minta timeline atau daftar pengingat, lalu sebut nomor pilihannya.'
+                        response = 'Detail belum cukup untuk usulan ini. Untuk koreksi, minta timeline/daftar pengingat dan sebut nomornya. Untuk check-in atau ringkasan baru, sebut waktu kirim yang kamu inginkan.'
                     else:
                         if proposed_change['operation'] == 'edit':
                             details = render_event({'kind': proposed_change['kind'], 'payload': proposed_change['payload'], 'occurred_at': datetime.fromisoformat(proposed_change['occurred_at'])}, zone)
+                        elif proposed_change['operation'] == 'preferences':
+                            details = f"{proposed_change['notification_kind']}: {'aktif' if proposed_change['enabled'] else 'nonaktif'} · {proposed_change['settings']['time']} {proposed_change['settings']['timezone']} · batas {proposed_change['settings']['max_daily']}/hari · jam tenang {proposed_change['settings']['quiet_start'] or '-'}–{proposed_change['settings']['quiet_end'] or '-'}"
                         elif proposed_change['operation'] == 'reminder':
                             details = proposed_change['body'][:200] + ' · ' + proposed_change['due_at'] + (' · lewati jam tenang' if proposed_change['bypass_quiet_hours'] else ' · ikuti jam tenang')
                         else:

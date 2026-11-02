@@ -123,6 +123,25 @@ class AgentTests(unittest.TestCase):
         result = OpenAICompatibleProvider('synthetic', 'test-model', BASE_URL, lambda _: response).propose('berapa dosis obat?', self.now, self.zone)
         self.assertEqual(result['kind'], 'out_of_scope')
 
+    def test_questions_and_plans_cannot_be_proposed_as_facts(self):
+        args = {'events':[{'kind':'diaper','occurred_at':'2026-01-01T09:30:00+07:00','payload_json':'{"type":"pup"}'}]}
+        provider = OpenAICompatibleProvider('synthetic','test-model',BASE_URL,lambda _:tool_response('create_events',json.dumps(args)))
+        for text in ('Apakah tadi pup?', 'besok pup jam 9', 'rencana minum 60 ml', 'berapa kali pup hari ini?'):
+            with self.subTest(text=text):
+                self.assertEqual(provider.propose(text,self.now,self.zone)['kind'],'clarify')
+
+    def test_period_query_and_setting_proposals_are_bounded(self):
+        proposal={'mode':'summary','start_date':'2025-12-31','end_date':'2025-12-31'}
+        provider=OpenAICompatibleProvider('synthetic','test-model',BASE_URL,lambda _:tool_response('query_records',json.dumps(proposal)))
+        self.assertEqual(provider.propose('berapa ml kemarin?',self.now,self.zone)['start_date'],'2025-12-31')
+        proposal['start_date']='2020-01-01'
+        with self.assertRaises(ProviderError):provider.propose('riwayat',self.now,self.zone)
+        settings={'notification_kind':'checkin','enabled':True,'time':'13:00','quiet_start':None,'quiet_end':None,'max_daily':1,'clear_quiet_hours':False}
+        provider=OpenAICompatibleProvider('synthetic','test-model',BASE_URL,lambda _:tool_response('set_notification_preferences',json.dumps(settings)))
+        self.assertEqual(provider.propose('aktifkan checkin jam 13',self.now,self.zone)['operation'],'preferences')
+        settings['clear_quiet_hours']=True
+        self.assertEqual(provider.propose('aktifkan checkin jam 13',self.now,self.zone)['kind'],'clarify')
+
     def test_compatible_base_url_requires_tls_except_loopback(self):
         with self.assertRaisesRegex(ValueError, 'HTTPS'):
             OpenAICompatibleProvider('synthetic', 'test-model', 'http://ai.example/v1')
@@ -249,3 +268,4 @@ class AgentTests(unittest.TestCase):
                 OpenAICompatibleProvider('synthetic', 'test-model', BASE_URL, lambda _: response).propose('uji', self.now, self.zone)
         with self.assertRaises(ProviderError):
             OpenAICompatibleProvider('synthetic', 'test-model', BASE_URL, lambda _: 1 / 0).propose('uji', self.now, self.zone)
+

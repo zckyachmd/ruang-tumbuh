@@ -15,6 +15,10 @@ const options = (items, selected) => items.map(([value, label]) => `<option valu
 const select = (name, items, value) => `<select name="${name}">${options(items, value)}</select>`;
 const localTime = (date = new Date()) => new Intl.DateTimeFormat('sv-SE', {timeZone: state.family?.timezone || 'Asia/Jakarta', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23'}).format(date).replace(' ', 'T');
 let toastTimer;
+let mutationBusy = false;
+function lockNavigation(locked) {
+  root.querySelectorAll('[data-page], #family, #child').forEach(control => { control.disabled = locked; });
+}
 function toast(message) { notice.textContent = message; clearTimeout(toastTimer); toastTimer = setTimeout(() => { notice.textContent = ''; }, 5000); }
 async function api(path, {method = 'GET', body, key} = {}) {
   const headers = {};
@@ -183,7 +187,9 @@ root.addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.target;
   const button = form.querySelector('button[type="submit"], button:not([type])');
-  if (button?.disabled) return;
+  if (button?.disabled || mutationBusy) return;
+  mutationBusy = true;
+  lockNavigation(true);
   if (button) button.disabled = true;
   try {
     const data = new FormData(form);
@@ -226,7 +232,7 @@ root.addEventListener('submit', async event => {
       state.key = ''; state.editing = null; state.page = 'timeline'; state.offset = 0; toast('Catatan tersimpan.'); await render();
     }
   } catch (error) { toast(error.message); }
-  finally { if (button) button.disabled = false; }
+  finally { mutationBusy = false; lockNavigation(false); if (button) button.disabled = false; }
 });
 root.addEventListener('change', async event => {
   try {
@@ -237,6 +243,7 @@ root.addEventListener('change', async event => {
   } catch (error) { toast(error.message); }
 });
 root.addEventListener('click', async event => {
+  if (mutationBusy) return;
   const target = event.target.closest('button'); if (!target) return;
   try {
     if (target.dataset.page) { state.page = target.dataset.page; state.offset = 0; state.editing = null; state.key = ''; await render(); }
