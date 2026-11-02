@@ -59,6 +59,7 @@ function shell(content) {
   const familyOptions = state.families.map(f => [String(f.id), f.name]);
   const childOptions = state.children.map(c => [String(c.id), c.nickname]);
   root.innerHTML = `<div class="layout"><aside><div class="family-switch"><label for="family">Keluarga</label><select id="family">${options(familyOptions, String(state.family.id))}</select></div>${state.children.length ? `<div class="family-switch"><label for="child">Anak</label><select id="child">${options(childOptions, String(state.child?.id))}</select></div>` : ''}<nav class="side" aria-label="Navigasi utama">${navigation.map(([id,label]) => `<button class="nav" data-page="${id}"${state.page === id ? ' aria-current="page"' : ''}>${label}</button>`).join('')}</nav></aside><div id="content">${content}</div></div><p class="footer-note">AI mendukung dokumentasi keluarga dan tenaga kesehatan. Diagnosis dan perawatan tetap tanggung jawab tenaga kesehatan; ini bukan layanan darurat.</p>`;
+  lockNavigation(mutationBusy);
   const nav = root.querySelector('.side'), active = nav.querySelector('[aria-current="page"]');
   if (nav.scrollWidth > nav.clientWidth && active) nav.scrollLeft = active.offsetLeft - nav.offsetLeft + active.offsetWidth - nav.clientWidth;
 }

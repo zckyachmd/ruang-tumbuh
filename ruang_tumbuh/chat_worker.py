@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from psycopg.types.json import Jsonb
 
 from .chat import interpret
+from .safety import route as safety_route, EMERGENCY_MESSAGE, HEALTH_MESSAGE
 from .agent import FakeProvider, OpenAICompatibleProvider, ProviderError, ai_consent_scope, render_event
 from .store import Denied, Invalid, Store
 from .conversation import named_children, load_context, save_context, merge_clarification, clarification_question
@@ -91,10 +92,10 @@ def _process_claimed(store, provider, row, token):
                 assigned = conn.execute("UPDATE inbound_updates SET family_id=%s WHERE update_id=%s AND status='processing' AND lease_token=%s RETURNING update_id", (context_family, update_id, token)).fetchone()
                 if not assigned:
                     return True
-        emergency = interpret(text, datetime.fromtimestamp(message['date'], timezone.utc), timezone.utc)['kind'] == 'emergency'
+        safety = safety_route(text)
         command = re.fullmatch(r'/([a-z]+)(?:@\w+)?(?:\s+(.+))?', text.strip(), flags=re.IGNORECASE)
-        if emergency:
-            response = 'Jika anak tidak bernapas, tidak sadar, atau mengalami kejang, segera hubungi layanan darurat setempat atau cari pertolongan medis segera.'
+        if safety:
+            response = EMERGENCY_MESSAGE if safety == 'emergency' else HEALTH_MESSAGE
             draft = False
         elif command:
             name, argument = command.group(1).lower(), (command.group(2) or '').strip()
@@ -313,7 +314,7 @@ def _process_claimed(store, provider, row, token):
                 elif result['kind'] == 'budget_exceeded':
                     response = 'Pemrosesan AI sedang dibatasi. Catatanmu belum disimpan. Kamu tetap bisa mencatat lewat Mini App; coba chat lagi nanti atau hubungi pengelola keluarga.'
                 elif result['kind'] == 'emergency':
-                    response = 'Jika anak tidak bernapas, tidak sadar, atau mengalami kejang, segera hubungi layanan darurat setempat atau cari pertolongan medis segera.'
+                    response = EMERGENCY_MESSAGE
                 elif result['kind'] == 'education':
                     response = result['message']
                 elif result['kind'] == 'out_of_scope':
