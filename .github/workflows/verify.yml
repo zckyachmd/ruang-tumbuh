@@ -30,6 +30,8 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -v
       - run: node --check web/app.js
+      - run: python -m playwright install --with-deps chromium
+      - run: python tests/ui_acceptance.py
       - name: Build runtime image
         run: docker build -t ruang-tumbuh:test .
       - name: Parse production Compose configuration
@@ -37,3 +39,21 @@ jobs:
           POSTGRES_PASSWORD: synthetic-ci-only
           APP_DOMAIN: synthetic.invalid
         run: docker compose -f compose.yaml -f compose.hosted.yaml config --quiet
+      - name: Container persistence and database restore
+        run: python tests/runtime_smoke.py
+  who-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install openpyxl==3.1.5
+      - name: Download private server-side reference assets without publishing them
+        run: python scripts/install-who-data.py "${RUNNER_TEMP}/who-data"
+      - name: Check against official reference SD columns
+        run: python scripts/validate-who-reference.py "${RUNNER_TEMP}/who-data"
+      - name: Remove licensed workbooks after verification
+        if: always()
+        run: rm -rf "${RUNNER_TEMP}/who-data"

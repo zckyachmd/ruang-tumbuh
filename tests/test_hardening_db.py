@@ -12,6 +12,7 @@ from unittest.mock import patch
 import psycopg
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
+from psycopg.types.json import Jsonb
 
 os.environ.setdefault('APP_ENV','development')
 os.environ.setdefault('APP_DATA_ENCRYPTION_KEY','AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
@@ -159,3 +160,25 @@ class HardeningDatabaseTests(unittest.TestCase):
         confirm_change(self.store,self.family,self.user,self.child,update)
         current=self.store.timeline(self.family,self.user,self.child)[0]
         self.assertEqual(current[2]['volume_ml'],80);self.assertEqual(current[4],2)
+
+    def test_last_poop_uses_index_with_fifty_thousand_newer_pee_records(self):
+        at=datetime(2026,10,1,tzinfo=timezone.utc)
+        poop=self.store.create_events(self.family,self.user,self.child,[{'kind':'diaper','payload':{'type':'pup'},'occurred_at':at}])[0]
+        cipher=self.store.data_cipher
+        token=cipher.lookup_token(self.family,'diaper',{'type':'pipis'})
+        sealed=Jsonb(cipher.seal_json({'type':'pipis'},'events.payload'))
+        with self.store.connect() as conn:
+            conn.execute("""INSERT INTO events(family_id,child_id,kind,payload,occurred_at,created_by,lookup_token)
+                SELECT %s,%s,'diaper',%s,%s+g*interval '1 second',%s,%s FROM generate_series(1,50000) g""",
+                (self.family,self.child,sealed,at,self.user,token))
+            conn.execute('ANALYZE events')
+            plan=conn.execute("""EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT kind,payload,occurred_at FROM events
+                WHERE family_id=%s AND child_id=%s AND kind='diaper' AND deleted_at IS NULL AND occurred_at<=now()
+                AND lookup_token=%s ORDER BY occurred_at DESC,id DESC LIMIT 1""",
+                (self.family,self.child,cipher.lookup_token(self.family,'diaper',{'type':'pup'}))).fetchone()[0]
+        import json
+        self.assertIn('events_lookup',json.dumps(plan))
+        found=self.store.last_event(self.family,self.user,self.child,'poop',datetime.now(timezone.utc))
+        self.assertEqual(found[1],{'type':'pup'})
+        self.store.update_event(self.family,self.user,poop,1,{'type':'pipis'},at)
+        self.assertIsNone(self.store.last_event(self.family,self.user,self.child,'poop',datetime.now(timezone.utc)))

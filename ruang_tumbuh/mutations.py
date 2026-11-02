@@ -56,8 +56,8 @@ def confirm_change(store, family, user, child, draft_id, cancel=False):
                 occurred = datetime.fromisoformat(change['occurred_at'])
                 if occurred > datetime.now(timezone.utc) or occurred.utcoffset() is None or not validate(event[1], change['payload']) or not valid_time(event[1], change['payload'], occurred):
                     raise Invalid()
-                conn.execute('UPDATE events SET payload=%s,occurred_at=%s,version=version+1,updated_at=now() WHERE id=%s',
-                             (Jsonb(store.data_cipher.seal_json(change['payload'], 'events.payload')), occurred, change['event_id']))
+                conn.execute('UPDATE events SET payload=%s,occurred_at=%s,lookup_token=%s,version=version+1,updated_at=now() WHERE id=%s',
+                             (Jsonb(store.data_cipher.seal_json(change['payload'], 'events.payload')), occurred, store.data_cipher.lookup_token(family, event[1], change['payload']), change['event_id']))
             else:
                 conn.execute('UPDATE events SET deleted_at=now(),updated_at=now(),version=version+1 WHERE id=%s', (change['event_id'],))
             conn.execute("INSERT INTO audit_log(family_id,actor_id,action,entity_type,entity_id) VALUES (%s,%s,%s,'event',%s)", (family, user, op, change['event_id']))

@@ -12,6 +12,8 @@ class RotationConnection:
         self.rows = rows
 
     def execute(self, query, params=None):
+        if query.startswith('SELECT EXISTS'):
+            return type('Result', (), {'fetchone': lambda _self: (False,)})()
         if query.startswith('SELECT to_regclass'):
             return type('Result', (), {'fetchone': lambda _self: (params[0] if params[0] in self.rows else None,)})()
         if query.startswith("SELECT "):

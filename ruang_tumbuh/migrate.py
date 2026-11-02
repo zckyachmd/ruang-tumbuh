@@ -26,6 +26,15 @@ def migrate(dsn, directory=Path('/app/migrations')):
                     conn.execute(sql)
                     if path.name == '011_encrypt_sensitive_content.sql':
                         encrypt_existing_sensitive_content(conn, DataCipher.from_environment())
+                    if path.name == '015_event_lookup.sql':
+                        cipher = DataCipher.from_environment()
+                        with conn.cursor(name='lookup_backfill') as rows:
+                            rows.itersize = 100
+                            rows.execute("SELECT id,family_id,payload FROM events WHERE kind='diaper'")
+                            for event_id, family, encrypted in rows:
+                                payload = cipher.open_json(encrypted, 'events.payload')
+                                conn.execute('UPDATE events SET lookup_token=%s WHERE id=%s',
+                                             (cipher.lookup_token(family, 'diaper', payload), event_id))
                     conn.execute('INSERT INTO schema_migrations (name,checksum) VALUES (%s,%s)', (path.name, checksum))
         finally:
             conn.execute('SELECT pg_advisory_unlock(%s)', (91357468,))
@@ -41,3 +50,4 @@ def schema_ready(conn, directory):
 
 if __name__ == '__main__':
     migrate(os.environ['DATABASE_URL'])
+
