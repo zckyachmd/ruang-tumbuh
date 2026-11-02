@@ -9,6 +9,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+os.environ.setdefault('APP_ENV', 'development')
 os.environ.setdefault('APP_DATA_ENCRYPTION_KEY', 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -56,7 +57,7 @@ class StoreTests(unittest.TestCase):
         self.family, self.child = self.store.create_family(1, 'Keluarga', 'Anak')
 
     def test_worker_reads_openai_compatible_provider_configuration(self):
-        class StopWorker(Exception):
+        class StopWorker(BaseException):
             pass
 
         environment = {
@@ -359,7 +360,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT result FROM actions WHERE update_id=%s AND action_key='create_invitation'", (invite_update,)).fetchone()[0], {})
             self.assertEqual(conn.execute('SELECT body,status FROM chat_outbox WHERE update_id=%s', (invite_update,)).fetchone(), ('', 'failed'))
 
-        _, blocked, _ = chat(user, 'Lili minum 120 ml')
+        _, blocked, _ = chat(user, 'Mawar minum 120 ml')
         self.assertIn('AI eksternal nonaktif', blocked)
         self.assertEqual(provider.sent, [])
         chat(user, f'/ai aktif {family}')
@@ -802,3 +803,4 @@ class StoreTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

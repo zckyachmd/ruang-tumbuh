@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from psycopg.types.json import Jsonb
 
-from .delivery import telegram_send
+from .delivery import telegram_send, RetryAfter
 from .store import Denied, Invalid
 
 MESSAGE = 'Ada minum atau popok yang belum sempat dicatat?'
@@ -169,11 +169,11 @@ def deliver_checkin(store, mode, token='', sender=telegram_send, now=None):
             conn.execute("UPDATE scheduled_occurrences SET next_attempt_at=%s WHERE id=%s", (now + timedelta(minutes=1), occurrence))
             return True
         sent = conn.execute("""SELECT count(*) FROM scheduled_occurrences WHERE family_id=%s AND telegram_user_id=%s
-            AND local_date=%s AND status IN ('attempted','sent','simulated','uncertain')""", (family, user, job[2])).fetchone()[0]
+            AND local_date=%s AND kind=%s AND status IN ('attempted','sent','simulated','uncertain')""", (family, user, job[2], kind)).fetchone()[0]
         if sent >= settings['max_daily']:
             conn.execute("UPDATE scheduled_occurrences SET status='cancelled',finished_at=%s WHERE id=%s", (now, occurrence))
             return True
-        conn.execute("UPDATE scheduled_occurrences SET status='attempted',attempted_at=%s WHERE id=%s", (now, occurrence))
+        conn.execute("UPDATE scheduled_occurrences SET status='attempted',attempted_at=%s,attempts=attempts+1 WHERE id=%s", (now, occurrence))
     # Commit attempt first: a crash after a send must never cause blind redelivery.
     with store.connect() as conn:
         try:
@@ -210,7 +210,11 @@ def deliver_checkin(store, mode, token='', sender=telegram_send, now=None):
                     f"popok {summary['counts']['diaper']}, tidur {summary['counts']['sleep']} catatan. "
                     f"ASIP {expressed}; formula {formula}. ASI langsung tidak termasuk volume. Data kosong bukan bukti aktivitas tidak terjadi.")
         status = 'simulated' if mode == 'fake' else sender(token, user, body)
+        if isinstance(status, RetryAfter):
+            conn.execute("UPDATE scheduled_occurrences SET status=CASE WHEN attempts<5 THEN 'pending' ELSE 'failed' END,next_attempt_at=%s WHERE id=%s AND status='attempted'", (now + timedelta(seconds=status.seconds), occurrence))
+            return True
         if status not in ('sent', 'failed', 'uncertain', 'simulated'):
             status = 'uncertain'
         conn.execute("UPDATE scheduled_occurrences SET status=%s,finished_at=%s WHERE id=%s AND status='attempted'", (status, now, occurrence))
     return True
+

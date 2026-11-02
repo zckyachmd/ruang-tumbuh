@@ -1,3 +1,5 @@
+> **Historical draft:** permission granted under request ID 202611419; do not submit this request again. See [active status](WHO-license-status.md).
+
 # WHO permission and licence clarification draft
 
 Use this text in the [WHO permissions request form](https://www.who.int/about/policies/publishing/permissions). The form asks for direct links to the material; the links below match the SHA-256 manifest in [WHO-growth-validation.md](WHO-growth-validation.md). Complete WHO's requester and contact fields yourself. Do not submit API keys, family data, or other private project credentials.
@@ -42,3 +44,4 @@ All files were downloaded for checksum inspection on 2026-11-02; the checksums a
 - Confirm the described server-side-only handling of WHO source files matches the intended product before submission.
 - Complete WHO's required requester and contact fields yourself.
 - Attach or retain the WHO response and reference ID with the asset manifest. Do not enable or distribute WHO comparisons until rights and validation gates pass.
+

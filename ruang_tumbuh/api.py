@@ -14,6 +14,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from .store import Conflict, Denied, Invalid, Store
+from .admission import QueueFull
 from .agent import ai_consent_scope
 from .checkins import acknowledge, get_preferences, set_preferences
 from .migrate import schema_ready
@@ -152,6 +153,10 @@ def create_app(dsn, bot_token, *, environment='production', dev_auth=False, webh
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     store = Store(dsn)
     bearer = HTTPBearer(auto_error=False)
+
+    @app.exception_handler(QueueFull)
+    async def queue_full(request, exc):
+        return JSONResponse(status_code=429, content={'detail':'Antrean penuh, coba lagi nanti'}, headers={'Retry-After':'30'})
 
     @app.exception_handler(Denied)
     async def denied(request, exc):
@@ -352,6 +357,50 @@ def create_app(dsn, bot_token, *, environment='production', dev_auth=False, webh
         acknowledge(store, family, user, day)
         return {'date': day.isoformat()}
 
+    @app.get('/api/chat-selection')
+    def chat_selection(user: int = Depends(current_user)):
+        selected = store.chat_selection(user)
+        return {'family_id': selected[0], 'child_id': selected[1]} if selected else None
+
+    @app.put('/api/families/{family}/children/{child}/chat-selection')
+    def choose_chat_profile(family: int, child: int, user: int = Depends(current_user)):
+        store.set_chat_selection(family, user, child)
+        return {'family_id': family, 'child_id': child}
+
+    @app.get('/api/families/{family}/delivery-status')
+    def delivery_status(family: int, user: int = Depends(current_user)):
+        with store.connect() as conn:
+            store._access(conn, family, user)
+            rows = conn.execute('SELECT update_id,status,attempts,next_attempt_at FROM chat_outbox WHERE family_id=%s AND recipient_id=%s ORDER BY update_id DESC LIMIT 20', (family,user)).fetchall()
+        return [{'update_id':row[0], 'status':row[1], 'attempts':row[2], 'retry_at':row[3]} for row in rows]
+
+    @app.get('/api/families/{family}/children/{child}/growth-series')
+    def growth_series(family: int, child: int, user: int = Depends(current_user)):
+        from .growth import compare, GrowthUnavailable
+        children = store.children(family, user)
+        profile = next((item for item in children if item[0] == child), None)
+        if profile is None:
+            raise Invalid()
+        zone = ZoneInfo(store.family_timezone(family,user))
+        rows = store.timeline(family, user, child, limit=100, kind='growth')
+        results = []
+        for row in rows:
+            payload, instant = row[2], row[3]
+            result = {'id':row[0], 'payload':payload, 'occurred_at':instant, 'comparison':None, 'unavailable':None}
+            indicator = {'weight':'wfa', 'length':'lhfa', 'height':'lhfa', 'head_circumference':'hcfa'}.get(payload['type'])
+            try:
+                if not profile[2] or not profile[3]:
+                    raise GrowthUnavailable('Tanggal lahir dan jenis kelamin diperlukan untuk perbandingan.')
+                if profile[4]:
+                    raise GrowthUnavailable('Informasi prematur perlu penilaian tenaga kesehatan; tidak dibuat penyesuaian otomatis.')
+                age = (instant.astimezone(zone).date()-profile[2]).days
+                result['comparison'] = compare(indicator, profile[3], age, payload['value'], position=payload.get('position'))
+            except (GrowthUnavailable, OSError, KeyError, StopIteration, ValueError):
+                result['unavailable'] = 'Perbandingan belum tersedia atau input/validasi belum lengkap. Catatan asli tetap tersimpan.'
+            results.append(result)
+        return {'measurements':results, 'limit':100, 'source':'https://www.who.int/tools/child-growth-standards',
+                'notice':'Catatan dan perbandingan bukan diagnosis. WHO tidak mengesahkan aplikasi ini.'}
+
     @app.get('/api/families/{family}/children/{child}/events')
     def timeline(family: int, child: int, limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0, le=100000), kind: str | None = None, user: int = Depends(current_user)):
         if kind is not None and kind not in ('feeding', 'diaper', 'sleep', 'growth', 'note'):
@@ -408,3 +457,4 @@ app = create_app(os.getenv('DATABASE_URL', ''), os.getenv('TELEGRAM_BOT_TOKEN', 
                  environment=os.getenv('APP_ENV', 'production'), dev_auth=os.getenv('DEV_AUTH_ENABLED') == '1',
                  webhook_secret=os.getenv('TELEGRAM_WEBHOOK_SECRET', ''),
                  telegram_transport=os.getenv('TELEGRAM_TRANSPORT', 'disabled'))
+

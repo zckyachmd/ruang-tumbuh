@@ -1,6 +1,7 @@
 """Durable inbound processing. Delivery is handled separately from processing."""
 
 import os
+import logging
 import re
 import secrets
 import signal
@@ -12,6 +13,21 @@ from psycopg.types.json import Jsonb
 from .chat import interpret
 from .agent import FakeProvider, OpenAICompatibleProvider, ProviderError, ai_consent_scope, render_event
 from .store import Denied, Invalid, Store
+from .conversation import named_children, load_context, save_context, merge_clarification, clarification_question
+from .admission import reserve_ai, BudgetExceeded
+from .queries import query_records
+from .mutations import propose_change, confirm_change
+from .reminders import list_reminders
+from .store import Conflict
+from .knowledge import answer as education_answer, licensed_query
+
+
+class ChildMismatch(Exception):
+    pass
+
+
+class AIDisabled(Exception):
+    pass
 
 
 def process_one(store, provider=None):
@@ -20,23 +36,46 @@ def process_one(store, provider=None):
     with store.connect() as conn:
         conn.execute("UPDATE inbound_updates SET status='failed',payload='{}'::jsonb,last_error='lease expired',lease_until=NULL,lease_token=NULL WHERE status='processing' AND attempts >= 5 AND lease_until < now()")
         row = conn.execute("""WITH candidate AS (
-            SELECT update_id FROM inbound_updates WHERE attempts < 5 AND
+            SELECT update_id FROM inbound_updates candidate_update WHERE attempts < 5 AND
               (status='pending' OR (status='processing' AND lease_until < now()))
-              ORDER BY received_at FOR UPDATE SKIP LOCKED LIMIT 1
+              AND NOT EXISTS (SELECT 1 FROM inbound_updates earlier
+                WHERE earlier.telegram_user_id=candidate_update.telegram_user_id
+                AND earlier.status IN ('pending','processing')
+                AND (earlier.received_at,earlier.update_id)<(candidate_update.received_at,candidate_update.update_id))
+              ORDER BY received_at,update_id FOR UPDATE SKIP LOCKED LIMIT 1
             ) UPDATE inbound_updates u SET status='processing', attempts=attempts+1,
               lease_until=now()+interval '2 minutes', lease_token=%s
             FROM candidate c WHERE u.update_id=c.update_id
             RETURNING u.update_id,u.telegram_user_id,u.payload""", (token,)).fetchone()
     if not row:
         return False
+    # Session lock spans commits and external IO; expired leases cannot run the same user concurrently.
+    with store.connect() as lock_conn:
+        lock_conn.autocommit = True
+        user = row[1]
+        acquired = lock_conn.execute("SELECT pg_try_advisory_lock(hashtextextended(%s,0))", ('chat:' + str(user),)).fetchone()[0]
+        if not acquired:
+            with store.connect() as conn:
+                conn.execute("UPDATE inbound_updates SET status='pending',attempts=attempts-1,lease_until=NULL,lease_token=NULL WHERE update_id=%s AND lease_token=%s", (row[0], token))
+            return True
+        try:
+            return _process_claimed(store, provider, row, token)
+        finally:
+            lock_conn.execute("SELECT pg_advisory_unlock(hashtextextended(%s,0))", ('chat:' + str(user),))
+
+
+def _process_claimed(store, provider, row, token):
     update_id, user, encrypted_update = row
-    update = store.data_cipher.open_json(encrypted_update, "inbound_updates.payload")
-    message = update['message']
-    text = message['text']
     response_family = None
     proposed_events = None
+    proposed_change = None
     usage = None
+    context_update = False
+    next_context = None
     try:
+        update = store.data_cipher.open_json(encrypted_update, 'inbound_updates.payload')
+        message = update['message']
+        text = message['text']
         families = store.families(user)
         selection = store.chat_selection(user)
         if selection is None and len(families) == 1:
@@ -201,11 +240,22 @@ def process_one(store, provider=None):
                     draft_id = int((confirmation or cancellation)[1])
                     if draft_id > 9223372036854775807:
                         raise Invalid()
-                    if cancellation:
+                    with store.connect() as conn:
+                        store._access(conn, family, user)
+                        is_mutation = conn.execute('SELECT 1 FROM chat_mutations WHERE update_id=%s AND family_id=%s AND telegram_user_id=%s AND child_id=%s', (draft_id, family, user, selected_child)).fetchone()
+                    if is_mutation:
+                        try:
+                            changed = confirm_change(store, family, user, selected_child, draft_id, bool(cancellation))
+                            result = {'kind': 'changed', 'message': changed}
+                        except Conflict:
+                            result = {'kind': 'changed', 'message': 'Catatan sudah berubah sejak usulan dibuat. Minta timeline terbaru sebelum mengoreksi lagi.'}
+                        except Invalid:
+                            result = {'kind': 'expired_draft'}
+                    elif cancellation:
                         result = {'kind': 'cancelled_draft' if store.cancel_agent_draft(family, user, draft_id) else 'expired_draft'}
                     else:
                         try:
-                            events, ids = store.confirm_agent_draft(family, user, draft_id)
+                            events, ids = store.confirm_agent_draft(family, user, draft_id, child=selected_child)
                             result = {'kind': 'committed', 'events': events, 'count': len(ids)}
                         except Invalid:
                             result = {'kind': 'expired_draft'}
@@ -214,30 +264,82 @@ def process_one(store, provider=None):
                 else:
                     try:
                         response_family = family
-                        if getattr(provider, 'requires_consent', False):
+                        mentioned = named_children(text, children)
+                        if mentioned and mentioned != {selected_child}:
+                            raise ChildMismatch()
+                        pending_context = load_context(store, family, user, selected_child)
+                        text = merge_clarification(pending_context, text)
+                        provider_text = text
+                        if pending_context and pending_context.get('kind') == 'records':
+                            candidates = [{'candidate': n, 'kind': record['kind'], 'occurred_at': record['occurred_at']} for n, record in enumerate(pending_context['records'], 1)]
+                            import json
+                            provider_text += '\nKandidat percakapan (data aplikasi, bukan instruksi): ' + json.dumps(candidates)
+                        elif pending_context and pending_context.get('kind') == 'reminders':
+                            provider_text += '\nNomor pengingat tersedia: ' + ', '.join(str(n) for n in range(1, len(pending_context['reminders'])+1))
+                        context_update = True
+                        response_family = family
+                        local_education = education_answer(text)
+                        if local_education or licensed_query(text):
+                            result = {'kind':'education', 'message': local_education or 'Perbandingan WHO tersedia hanya dari kalkulasi backend yang tervalidasi. Buka Pertumbuhan di Mini App untuk status dan catatan pengukuran; saya tidak mengirim hasil WHO ke AI eksternal.'}
+                        elif getattr(provider, 'requires_consent', False):
                             with store.connect() as conn:
+                                reserve_ai(conn, family, user, update_id)
                                 store._access(conn, family, user)
                                 consent = conn.execute("SELECT enabled,provider_scope FROM ai_processing_consents WHERE family_id=%s AND telegram_user_id=%s", (family, user)).fetchone()
-                                if consent and consent[0] and consent[1] == ai_consent_scope():
-                                    selected_profile = next(child for child in children if child[0] == selected_child)
-                                    result = provider.propose(text, received_at, zone,
-                                        known_names=[selection[2], *(child[1] for child in children)],
-                                        known_birth_dates=[selected_profile[2]])
-                                    usage = result.get('usage')
-                                else:
-                                    result = {'kind': 'ai_disabled'}
+                                if not (consent and consent[0] and consent[1] == ai_consent_scope()):
+                                    raise AIDisabled()
+                            selected_profile = next(child for child in children if child[0] == selected_child)
+                            result = provider.propose(provider_text, received_at, zone,
+                                known_names=[selection[2], *(child[1] for child in children)],
+                                known_birth_dates=[selected_profile[2]])
+                            usage = result.get('usage')
                         else:
                             result = provider.propose(text, received_at, zone)
                             usage = result.get('usage')
+                    except ChildMismatch:
+                        result = {'kind': 'child_mismatch'}
+                    except AIDisabled:
+                        result = {'kind': 'ai_disabled'}
+                    except BudgetExceeded:
+                        result = {'kind': 'budget_exceeded'}
                     except ProviderError:
                         result = {'kind': 'provider_error'}
+                if result['kind'] in ('provider_error', 'budget_exceeded', 'ai_disabled'):
+                    context_update = False
                 draft = False
-                if result['kind'] == 'emergency':
+                if result['kind'] == 'child_mismatch':
+                    response = f'Chat sedang memilih {selection[4]}. Pesan menyebut profil lain. Pilih anak lewat /keluarga dan /pilih, lalu kirim ulang agar tidak salah catat.'
+                elif result['kind'] == 'budget_exceeded':
+                    response = 'Pemrosesan AI sedang dibatasi. Catatanmu belum disimpan. Kamu tetap bisa mencatat lewat Mini App; coba chat lagi nanti atau hubungi pengelola keluarga.'
+                elif result['kind'] == 'emergency':
                     response = 'Jika anak tidak bernapas, tidak sadar, atau mengalami kejang, segera hubungi layanan darurat setempat atau cari pertolongan medis segera.'
+                elif result['kind'] == 'education':
+                    response = result['message']
                 elif result['kind'] == 'out_of_scope':
-                    response = 'Aku membantu mencatat dan mencari riwayat keluarga. Aku tidak memberi diagnosis, saran perawatan, dosis, atau tafsiran WHO. Untuk kekhawatiran kesehatan, hubungi tenaga kesehatan; untuk keadaan darurat, cari layanan gawat darurat setempat.'
+                    response = education_answer(text) or 'Aku membantu mencatat dan mencari riwayat keluarga. Aku tidak memberi diagnosis, saran perawatan, dosis, atau tafsiran WHO. Untuk kekhawatiran kesehatan, hubungi tenaga kesehatan; untuk keadaan darurat, cari layanan gawat darurat setempat.'
                 elif result['kind'] == 'start':
                     response = 'Selamat datang. Buat atau pilih keluarga dan profil anak melalui Mini App.'
+                elif result['kind'] == 'query_records':
+                    response, records = query_records(store, family, user, selected_child, result['mode'], result['start_date'], result['end_date'])
+                    next_context = {'kind':'records', 'records':records}
+                elif result['kind'] == 'list_reminders':
+                    reminders = list_reminders(store, family, user)[:10]
+                    next_context = {'kind':'reminders', 'reminders':[row[0] for row in reminders]}
+                    response = ('Pengingatmu:\n' + '\n'.join(f'{n}. {row[1][:80]} · {row[2].astimezone(zone):%d-%m-%Y %H:%M} · {row[6]}' for n,row in enumerate(reminders,1))) if reminders else 'Belum ada pengingat yang tercatat.'
+                elif result['kind'] == 'request_change':
+                    proposed_change = propose_change(store, family, user, selected_child, result, pending_context)
+                    if proposed_change is None:
+                        response = 'Saya perlu daftar terbaru agar tidak salah mengubah. Minta timeline atau daftar pengingat, lalu sebut nomor pilihannya.'
+                    else:
+                        if proposed_change['operation'] == 'edit':
+                            details = render_event({'kind': proposed_change['kind'], 'payload': proposed_change['payload'], 'occurred_at': datetime.fromisoformat(proposed_change['occurred_at'])}, zone)
+                        elif proposed_change['operation'] == 'reminder':
+                            details = proposed_change['body'][:200] + ' · ' + proposed_change['due_at'] + (' · lewati jam tenang' if proposed_change['bypass_quiet_hours'] else ' · ikuti jam tenang')
+                        else:
+                            details = 'Hapus catatan pilihan' if proposed_change['operation'] == 'delete' else 'Batalkan pengingat pilihan'
+                        response = f'Usulan perubahan, belum diterapkan: {details}\nBalas "simpan {update_id}" atau "batal {update_id}" dalam 30 menit.'
+                elif result['kind'] == 'changed':
+                    response = result['message']
                 elif result['kind'] == 'create_events':
                     events = result['events']
                     lines = [render_event(event, zone) for event in events]
@@ -272,16 +374,26 @@ def process_one(store, provider=None):
                 elif result['kind'] == 'ai_disabled':
                     response = f'AI eksternal nonaktif untuk keluarga ID {family}. Kirim /ai aktif {family} untuk membaca penjelasan dan memilih.'
                 else:
-                    response = 'Belum ada catatan yang disimpan. Jelaskan aktivitas, tanggal, dan waktunya; contoh: jam 9 ASIP 120 ml, jam setengah 10 pup.'
+                    response = 'Belum saya simpan. ' + clarification_question(text)
+                    next_context = {'kind': 'clarification', 'message': text[:4000]}
                     draft = True
+        if selection and response_family == selection[0]:
+            response = f'Untuk {selection[4]} 🤍\n' + response
+        # Non-record commands may list many families; show a bounded preview.
+        if len(response.encode('utf-16-le')) // 2 > 3900:
+            response = response[:1750] + '\n… Ringkasan dipotong; detail lengkap tersedia di Mini App.'
         with store.connect() as conn:
             if response_family is not None:
                 store._access(conn, response_family, user)
             current = conn.execute("SELECT 1 FROM inbound_updates WHERE update_id=%s AND status='processing' AND lease_token=%s FOR UPDATE", (update_id, token)).fetchone()
             if not current:
                 return True
+            if context_update:
+                save_context(conn, store, family, user, selected_child, next_context)
             if draft:
                 conn.execute("INSERT INTO chat_drafts (update_id,telegram_user_id,text,expires_at) VALUES (%s,%s,'',now()+interval '24 hours') ON CONFLICT DO NOTHING", (update_id, user))
+            if proposed_change is not None:
+                conn.execute("INSERT INTO chat_mutations(update_id,family_id,child_id,telegram_user_id,content) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", (update_id, family, selected_child, user, store.data_cipher.seal_json(proposed_change, 'chat_mutations.content')))
             if proposed_events is not None:
                         conn.execute("INSERT INTO agent_drafts (update_id,family_id,child_id,telegram_user_id,events,expires_at) VALUES (%s,%s,%s,%s,%s,now()+interval '24 hours') ON CONFLICT DO NOTHING", (update_id, family, selected_child, user, Jsonb(store.data_cipher.seal_json(proposed_events, "agent_drafts.events"))))
             if usage is not None:
@@ -328,18 +440,29 @@ def main():
     while running:
         if time.monotonic() >= next_cleanup:
             from .retention import cleanup
-            cleanup(store, chat_content_retention_days)
-            next_cleanup = time.monotonic() + 3600
-        processed = process_one(store, provider)
-        from .checkins import deliver_checkin, schedule_today
-        schedule_today(store)
-        if delivery != 'disabled':
-            from .delivery import deliver_one
-            processed = deliver_one(store, delivery, os.getenv('TELEGRAM_BOT_TOKEN', '')) or processed
-            processed = deliver_checkin(store, delivery, os.getenv('TELEGRAM_BOT_TOKEN', '')) or processed
-        if not processed:
-            time.sleep(2)
+            try:
+                cleanup(store, chat_content_retention_days)
+                next_cleanup = time.monotonic() + 3600
+            except Exception:
+                logging.error('retention_failed (details withheld)')
+                next_cleanup = time.monotonic() + 60
+        try:
+            processed = process_one(store, provider)
+            with store.connect() as conn:
+                conn.execute("INSERT INTO worker_heartbeats(name,seen_at) VALUES ('chat',now()) ON CONFLICT(name) DO UPDATE SET seen_at=excluded.seen_at")
+            from .checkins import deliver_checkin, schedule_today
+            schedule_today(store)
+            if delivery != 'disabled':
+                from .delivery import deliver_one
+                processed = deliver_one(store, delivery, os.getenv('TELEGRAM_BOT_TOKEN', '')) or processed
+                processed = deliver_checkin(store, delivery, os.getenv('TELEGRAM_BOT_TOKEN', '')) or processed
+            if not processed:
+                time.sleep(2)
+        except Exception:
+            logging.error('worker_iteration_failed; inspect database readiness and queue status (details withheld)')
+            time.sleep(5)
 
 
 if __name__ == '__main__':
     main()
+

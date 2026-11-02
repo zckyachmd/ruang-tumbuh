@@ -11,6 +11,7 @@ from psycopg.types.json import Jsonb
 
 from .events import validate, valid_time
 from .privacy import DataCipher
+from .admission import admit_creator, admit_update
 
 class Denied(Exception):
     pass
@@ -182,6 +183,8 @@ class Store:
         if (not isinstance(name, str) or not name.strip() or len(name.strip()) > 100
                 or not isinstance(nickname, str) or not nickname.strip() or len(nickname.strip()) > 100):
             raise Invalid()
+        if not admit_creator(user):
+            raise Denied()
         try:
             ZoneInfo(zone)
         except (ValueError, KeyError):
@@ -258,6 +261,7 @@ class Store:
                 raise Invalid()
             conn.execute("UPDATE family_members SET revoked_at=now() WHERE family_id=%s AND telegram_user_id=%s", (family, target))
             conn.execute("DELETE FROM chat_selections WHERE family_id=%s AND telegram_user_id=%s", (family, target))
+            conn.execute('DELETE FROM conversation_contexts WHERE family_id=%s AND telegram_user_id=%s', (family, target))
             conn.execute("UPDATE notification_preferences SET enabled=false WHERE family_id=%s AND telegram_user_id=%s", (family, target))
             conn.execute("UPDATE ai_processing_consents SET enabled=false,decided_at=now() WHERE family_id=%s AND telegram_user_id=%s", (family, target))
             conn.execute("UPDATE scheduled_occurrences SET status='cancelled' WHERE family_id=%s AND telegram_user_id=%s AND status IN ('pending','claimed')", (family, target))
@@ -268,6 +272,7 @@ class Store:
         if type(update_id) is not int or type(user) is not int or not isinstance(payload, dict):
             raise Invalid()
         with self.connect() as conn:
+            admit_update(conn, update_id, user)
             encrypted = self._seal_json(payload, "inbound_updates.payload")
             row = conn.execute("""INSERT INTO inbound_updates (update_id,telegram_user_id,payload)
                 VALUES (%s,%s,%s) ON CONFLICT DO NOTHING RETURNING update_id""", (update_id, user, Jsonb(encrypted))).fetchone()
@@ -320,11 +325,11 @@ class Store:
                 conn.execute("UPDATE api_actions SET result=%s WHERE telegram_user_id=%s AND action_key=%s", (Jsonb({'event_ids': ids}), user, request_key))
         return ids
 
-    def confirm_agent_draft(self, family, user, draft_id):
+    def confirm_agent_draft(self, family, user, draft_id, *, child=None):
         with self.connect() as conn:
             self._access(conn, family, user)
             row = conn.execute("SELECT events,child_id,status FROM agent_drafts WHERE update_id=%s AND family_id=%s AND telegram_user_id=%s AND expires_at>now() FOR UPDATE", (draft_id, family, user)).fetchone()
-            if not row or row[2] == 'cancelled':
+            if not row or row[2] == 'cancelled' or (child is not None and row[1] != child):
                 raise Invalid()
             entries = [dict(item, occurred_at=datetime.fromisoformat(item['occurred_at'])) for item in self._open_json(row[0], "agent_drafts.events")]
             validate_entries(entries)
@@ -394,13 +399,17 @@ class Store:
             raise Invalid()
         with self.connect() as conn:
             self._access(conn, family, user)
-            rows = conn.execute("""SELECT kind,payload,occurred_at FROM events WHERE family_id=%s AND child_id=%s
-                AND kind=%s AND deleted_at IS NULL AND occurred_at<=%s
-                ORDER BY occurred_at DESC,id DESC""", (family, child, kinds[category], before)).fetchall()
-            for kind, payload, occurred_at in rows:
-                payload = self._open_json(payload, "events.payload")
-                if category != "poop" or payload.get("type") in ("pup", "both"):
-                    return kind, payload, occurred_at
+            # A server cursor bounds memory even when encrypted diaper subtype requires scanning.
+            with conn.cursor(name='last_event') as cursor:
+                cursor.itersize = 100
+                cursor.execute("""SELECT kind,payload,occurred_at FROM events WHERE family_id=%s AND child_id=%s
+                    AND kind=%s AND deleted_at IS NULL AND occurred_at<=%s
+                    ORDER BY occurred_at DESC,id DESC""" + (" LIMIT 1" if category != 'poop' else ''),
+                    (family, child, kinds[category], before))
+                for kind, payload, occurred_at in cursor:
+                    payload = self._open_json(payload, "events.payload")
+                    if category != 'poop' or payload.get('type') in ('pup', 'both'):
+                        return kind, payload, occurred_at
             return None
 
     def agent_usage(self, family, user):
@@ -466,6 +475,7 @@ class Store:
             conn.execute('INSERT INTO family_deletion_receipts (family_id,actor_id,token_hash) VALUES (%s,%s,%s)', (family, user, digest))
             conn.execute('DELETE FROM chat_outbox WHERE family_id=%s OR update_id IN (SELECT update_id FROM inbound_updates WHERE family_id=%s)', (family, family))
             conn.execute('DELETE FROM agent_drafts WHERE family_id=%s', (family,))
+            conn.execute('DELETE FROM conversation_contexts WHERE family_id=%s', (family,))
             conn.execute('DELETE FROM agent_usage WHERE family_id=%s', (family,))
             conn.execute('DELETE FROM chat_drafts WHERE update_id IN (SELECT update_id FROM inbound_updates WHERE family_id=%s)', (family,))
             conn.execute('DELETE FROM actions WHERE update_id IN (SELECT update_id FROM inbound_updates WHERE family_id=%s)', (family,))
@@ -475,3 +485,4 @@ class Store:
             for table in ('checkin_answers', 'scheduled_occurrences', 'reminders', 'notification_preferences', 'ai_processing_consents', 'events', 'children', 'invitations', 'audit_log', 'family_members'):
                 conn.execute(f'DELETE FROM {table} WHERE family_id=%s', (family,))
             conn.execute('DELETE FROM families WHERE id=%s', (family,))
+

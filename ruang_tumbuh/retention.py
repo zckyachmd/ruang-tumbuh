@@ -6,6 +6,9 @@ def cleanup(store, chat_content_retention_days=7):
         raise ValueError('CHAT_CONTENT_RETENTION_DAYS must be between 1 and 30')
     with store.connect() as conn:
         conn.execute('DELETE FROM sessions WHERE expires_at < now()')
+        conn.execute('DELETE FROM conversation_contexts WHERE expires_at < now()')
+        conn.execute('DELETE FROM chat_mutations WHERE expires_at < now()')
+        conn.execute("DELETE FROM ai_reservations WHERE reserved_at < now()-interval '2 days'")
         conn.execute('DELETE FROM family_deletion_requests WHERE expires_at < now()')
         conn.execute("DELETE FROM family_deletion_receipts WHERE deleted_at < now() - interval '90 days'")
         conn.execute('DELETE FROM chat_drafts WHERE expires_at < now()')
@@ -34,3 +37,4 @@ def cleanup(store, chat_content_retention_days=7):
             WHERE u.received_at < now() - (%s * interval '1 day') AND u.status IN ('completed','failed')
             AND NOT EXISTS (SELECT 1 FROM chat_outbox o WHERE o.update_id=u.update_id AND o.status IN ('pending','attempted'))
             AND u.payload <> '{}'::jsonb""", (chat_content_retention_days,))
+

@@ -60,6 +60,8 @@ class DataCipher:
 
 
 SENSITIVE_FIELDS = (
+        ("chat_mutations", "update_id", "content", "chat_mutations.content", True),
+        ("conversation_contexts", "telegram_user_id,family_id,child_id", "content", "conversation_contexts.content", True),
         ("families", "id", "name", "families.name", False),
         ("children", "id", "nickname", "children.nickname", False),
         ("children", "id", "birth_date", "children.birth_date", False),
@@ -78,6 +80,8 @@ SENSITIVE_FIELDS = (
 
 def _walk_sensitive_fields(conn):
     for table, key_columns, column, context, is_json in SENSITIVE_FIELDS:
+        if not conn.execute("SELECT to_regclass(%s)", (table,)).fetchone()[0]:
+            continue
         keys = key_columns.split(",")
         selected = ",".join(keys)
         for row in conn.execute(f"SELECT {selected},{column} FROM {table}").fetchall():
@@ -109,3 +113,4 @@ def rotate_sensitive_content(conn, old_cipher, new_cipher):
         conn.execute(f"UPDATE {table} SET {column}=%s WHERE " +
                      " AND ".join(f"{key}=%s" for key in keys),
                      (Jsonb(encrypted) if is_json else encrypted, *values))
+

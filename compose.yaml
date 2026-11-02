@@ -1,6 +1,10 @@
 x-db-url: &database_url postgresql://ruang:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/ruang
 x-base-environment: &base_environment
   DATABASE_URL: *database_url
+  APP_ENV: ${APP_ENV:-production}
+  FAMILY_CREATOR_IDS: ${FAMILY_CREATOR_IDS:-}
+  INBOUND_GLOBAL_LIMIT: ${INBOUND_GLOBAL_LIMIT:-10000}
+  INBOUND_USER_LIMIT: ${INBOUND_USER_LIMIT:-20}
   APP_DATA_ENCRYPTION_KEY: ${APP_DATA_ENCRYPTION_KEY:?Set APP_DATA_ENCRYPTION_KEY in .env}
 services:
   db:
@@ -37,12 +41,18 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-fake}
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_MODEL: ${AI_MODEL:-}
+      WHO_COMPARISON_ENABLED: ${WHO_COMPARISON_ENABLED:-0}
+      WHO_DATA_DIR: /run/who-data
+    volumes:
+      - ${WHO_DATA_DIR:-./who-data}:/run/who-data:ro
     ports:
       - "127.0.0.1:${APP_PORT:-8000}:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=2)"]
@@ -62,10 +72,17 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_MODEL: ${AI_MODEL:-}
       AI_API_KEY: ${AI_API_KEY:-}
+      AI_FAMILY_IDS: ${AI_FAMILY_IDS:-}
+      AI_GLOBAL_DAILY_REQUESTS: ${AI_GLOBAL_DAILY_REQUESTS:-500}
+      AI_FAMILY_DAILY_REQUESTS: ${AI_FAMILY_DAILY_REQUESTS:-100}
+      AI_USER_MINUTE_REQUESTS: ${AI_USER_MINUTE_REQUESTS:-5}
+      AI_PAUSED: ${AI_PAUSED:-0}
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
     stop_grace_period: 30s
   telegram-poller:
     profiles: ["polling"]
@@ -83,3 +100,4 @@ services:
     stop_grace_period: 45s
 volumes:
   postgres_data:
+

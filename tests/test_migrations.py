@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import os
+os.environ.setdefault('APP_ENV', 'development')
 import secrets
 import unittest
 from pathlib import Path
@@ -117,3 +118,4 @@ class SensitiveDataMigrationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
