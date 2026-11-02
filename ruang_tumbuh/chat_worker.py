@@ -400,6 +400,9 @@ def _process_claimed(store, provider, row, token):
                 conn.execute("INSERT INTO agent_usage (update_id,family_id,model,input_tokens,output_tokens) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", (update_id, family, usage['model'], usage['input_tokens'], usage['output_tokens']))
             conn.execute("INSERT INTO chat_outbox (update_id,recipient_id,family_id,body) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING", (update_id, user, response_family, store.data_cipher.seal(response, "chat_outbox.body")))
             conn.execute("UPDATE inbound_updates SET family_id=COALESCE(family_id,%s),payload='{}'::jsonb,status='completed',lease_until=NULL,lease_token=NULL WHERE update_id=%s", (response_family, update_id))
+        if update.get('callback_id') and os.getenv('TELEGRAM_DELIVERY') == 'telegram':
+            from .delivery import acknowledge_callback
+            acknowledge_callback(os.environ['TELEGRAM_BOT_TOKEN'], update['callback_id'])
     except (Denied, Invalid, ValueError, KeyError, OverflowError):
         with store.connect() as conn:
             conn.execute("UPDATE inbound_updates SET status='failed',payload='{}'::jsonb,last_error='invalid or inaccessible',lease_until=NULL,lease_token=NULL WHERE update_id=%s AND lease_token=%s", (update_id, token))

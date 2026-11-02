@@ -21,7 +21,7 @@ from .migrate import schema_ready
 from .export import export_csv
 from .reminders import cancel_reminder, create_reminder, list_reminders
 from .telegram_auth import AuthenticationError, verify_init_data
-from .telegram_updates import minimal_private_update
+from .telegram_updates import minimal_private_update, normalize_private_update
 
 
 class Body(BaseModel):
@@ -223,17 +223,9 @@ def create_app(dsn, bot_token, *, environment='production', dev_auth=False, webh
         try:
             import json
             update = json.loads(raw)
-            update_id = update['update_id']
-            message = update.get('message')
-            if not isinstance(message, dict) or message.get('chat', {}).get('type') != 'private':
-                return {'ok': True}
-            user = message['from']['id']
-            if (type(update_id) is not int or type(user) is not int or user <= 0
-                    or message['chat']['id'] != user or message['from'].get('is_bot') is True
-                    or not isinstance(message.get('text'), str) or len(message['text']) > 4096
-                    or type(message.get('date')) is not int):
-                raise ValueError()
-            store.record_update(update_id, user, minimal_private_update(update_id, user, message['text'], message['date']))
+            normalized = normalize_private_update(update)
+            if normalized is not None:
+                store.record_update(normalized['update_id'], normalized['message']['from']['id'], normalized)
         except (ValueError, TypeError, KeyError, AttributeError):
             raise HTTPException(status_code=400, detail='Update tidak valid') from None
         return {'ok': True}

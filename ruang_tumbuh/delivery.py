@@ -1,6 +1,7 @@
 """Outbox delivery never retries a send whose outcome is unknown."""
 
 import json
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -18,9 +19,15 @@ def telegram_send(token, recipient, body):
     # Rendering owns previews; never silently truncate an arbitrary send here.
     if not body or len(body.encode('utf-16-le')) // 2 > 4096:
         return 'failed'
+    payload = {'chat_id': recipient, 'text': body}
+    proposal = re.search(r'Balas "simpan (\d{1,19})" atau "batal \1"', body)
+    if proposal:
+        payload['reply_markup'] = {'inline_keyboard': [[
+            {'text':'Simpan 🤍', 'callback_data':'save:'+proposal[1]},
+            {'text':'Batal', 'callback_data':'cancel:'+proposal[1]}]]}
     request = urllib.request.Request(
         f'https://api.telegram.org/bot{token}/sendMessage',
-        data=json.dumps({'chat_id': recipient, 'text': body}).encode(),
+        data=json.dumps(payload).encode(),
         headers={'Content-Type': 'application/json'}, method='POST')
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
@@ -39,6 +46,17 @@ def telegram_send(token, recipient, body):
         return 'failed' if 400 <= exc.code < 500 else 'uncertain'
     except Exception:
         return 'uncertain'
+
+
+def acknowledge_callback(token, callback_id):
+    request = urllib.request.Request(f'https://api.telegram.org/bot{token}/answerCallbackQuery',
+        data=json.dumps({'callback_query_id':callback_id}).encode(), headers={'Content-Type':'application/json'}, method='POST')
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            response.read(65536)
+    except Exception:
+        # Cosmetic acknowledgement only; never retry or repeat the underlying write.
+        pass
 
 
 def deliver_one(store, mode, token='', sender=telegram_send):
