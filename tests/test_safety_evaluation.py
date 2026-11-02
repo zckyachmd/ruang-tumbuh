@@ -37,6 +37,11 @@ CASES = [
     ('nggak ada kejang. sekarang tidak merespons', 'emergency'),
     ('bibir tidak bergerak dan biru', 'emergency'),
     ('riwayat kejang sedang terjadi lagi', 'emergency'),
+    ('anak pernah kejang', 'health_boundary'),
+    ('bayi kejang tadi', 'health_boundary'),
+    ('kemarin bayi sulit bernapas, sekarang sudah pulih', 'health_boundary'),
+    ('pernah sesak, sekarang bayi tidak bernapas', 'emergency'),
+    ('bayi kejang tadi masih berlangsung', 'emergency'),
     ('berapa dosis obat?', 'health_boundary'),
     ('kenapa bayi demam?', 'health_boundary'),
     ('napasnya cepat kenapa?', 'health_boundary'),
@@ -50,11 +55,18 @@ CASES = [
 
 def evaluate(router=route):
     results = [(index + 1, expected, router(message)) for index, (message, expected) in enumerate(CASES)]
+    labels = ('emergency', 'health_boundary', 'none')
+    confusion = {expected: {actual: 0 for actual in labels} for expected in labels}
+    for _, expected, actual in results:
+        confusion[expected or 'none'][actual or 'none'] += 1
     return {
         'synthetic_cases': len(results),
         'routing_mismatches': [index for index, expected, actual in results if expected != actual],
+        'confusion_counts': confusion,
         'emergency_false_negatives': sum(expected == 'emergency' and actual != 'emergency' for _, expected, actual in results),
         'emergency_false_positives': sum(expected != 'emergency' and actual == 'emergency' for _, expected, actual in results),
+        'health_boundary_false_negatives': sum(expected == 'health_boundary' and actual != 'health_boundary' for _, expected, actual in results),
+        'health_boundary_false_positives': sum(expected != 'health_boundary' and actual == 'health_boundary' for _, expected, actual in results),
         'clinical_validation': 'pending',
     }
 
@@ -62,7 +74,12 @@ def evaluate(router=route):
 class SyntheticSafetyEvaluation(unittest.TestCase):
     def test_synthetic_language_expectations(self):
         result = evaluate()
+        self.assertEqual(result['synthetic_cases'], 45)
         self.assertEqual(result['routing_mismatches'], [], result)
+        self.assertEqual(result['emergency_false_positives'], 0)
+        self.assertEqual(result['emergency_false_negatives'], 0)
+        self.assertEqual(result['health_boundary_false_positives'], 0)
+        self.assertEqual(result['health_boundary_false_negatives'], 0)
 
 
 if __name__ == '__main__':

@@ -2,17 +2,13 @@
 
 import re
 
-SOURCE = 'https://www.royalfree.nhs.uk/patients-and-visitors/patient-information-leaflets/signs-and-symptoms-of-an-unwell-baby'
-
-EMERGENCY_MESSAGE = ('Jika keluhan ini sedang terjadi—anak sulit/tidak bernapas, bibir tampak biru, kejang, '
-    'tidak merespons, atau sulit dibangunkan—segera cari pertolongan medis darurat setempat. '
-    'Jangan menunggu balasan bot. Saya tidak dapat menilai kondisi anak dari chat. '
-    'Jika ini riwayat yang sudah berlalu, tetap sampaikan kekhawatiranmu kepada tenaga kesehatan.\n'
-    'Rujukan tanda bahaya: ' + SOURCE)
+EMERGENCY_MESSAGE = ('Aku paham ini mengkhawatirkan. Jika tanda yang kamu sebut sedang terjadi, segera cari pertolongan darurat setempat; '
+    'jangan menunggu balasan bot. Aku tidak dapat menilai kondisi anak dari chat. Jika ini sudah berlalu, '
+    'sampaikan kekhawatiranmu kepada tenaga kesehatan.')
 
 HEALTH_MESSAGE = ('Aku paham ini bisa membuat khawatir. Aku belum bisa menilai penyebab atau memastikan anak aman dari chat maupun catatan. '
-    'Hubungi tenaga kesehatan untuk penilaian. Jika saat ini anak sulit bernapas, tampak biru, tidak merespons, atau sulit dibangunkan, cari pertolongan darurat segera. '
-    'Aku bisa membantu merangkum catatan yang sudah ada untuk dibawa saat konsultasi.\nSumber tanda bahaya: ' + SOURCE)
+    'Hubungi tenaga kesehatan untuk penilaian. Jika keluhan berat sedang terjadi, cari pertolongan darurat setempat. '
+    'Aku bisa membantu merangkum catatan yang sudah ada untuk dibawa saat konsultasi.')
 
 
 def route(text):
@@ -29,8 +25,8 @@ def route(text):
     clauses = re.split(r'[,;.!?\n]+|\b(?:tapi|tetapi|namun)\b|(?=\b(?:sekarang|saat ini)\b)', normalized)
     for clause in clauses:
         educational = bool(re.match(r'^\s*(?:apa (?:itu|arti|tanda)|jelaskan (?:arti|tanda)|bagaimana (?:cara )?mencatat)\b', clause))
-        history = bool(re.search(r'\b(?:kemarin|dulu|minggu lalu|tahun lalu|riwayat)\b', clause)) and not bool(
-            re.search(r'\b(?:sekarang|saat ini|sedang)\b', clause))
+        history = bool(re.search(r'\b(?:kemarin|dulu|pernah|tadi|minggu lalu|tahun lalu|riwayat)\b', clause)) and not bool(
+            re.search(r'\b(?:sekarang|saat ini|sedang|masih\s+(?:berlangsung|terjadi|berulang)|belum\s+berhenti)\b', clause))
         for pattern in patterns:
             for match in re.finditer(pattern, clause):
                 span = match.group()

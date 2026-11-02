@@ -2,15 +2,20 @@
 
 import re
 
-SOURCE = 'https://www.who.int/tools/child-growth-standards'
 REGISTRY = {
     'growth_reference': {
-        'source': SOURCE, 'reviewed_at': '2026-11-02', 'version': 'WHO Child Growth Standards overview',
-        'text': 'Kurva pertumbuhan adalah referensi untuk membandingkan pengukuran menurut umur dan jenis kelamin. Catatan pengukuran tetap perlu dinilai bersama tenaga kesehatan; satu angka bukan diagnosis. Ruang Tumbuh hanya menampilkan perbandingan setelah dataset dan perhitungannya divalidasi.'},
+        'source': 'https://www.who.int/tools/child-growth-standards',
+        'source_title': 'WHO Child Growth Standards', 'source_version': 'Standar 2006; halaman ringkasan resmi',
+        'reviewed_at': '2026-11-03', 'age_scope': 'Lahir sampai 60 bulan lengkap',
+        'applicability': 'Gambaran kurva menurut umur dan jenis kelamin; bukan interpretasi pengukuran anak.',
+        'text': 'WHO menyediakan kurva pertumbuhan menurut umur dan jenis kelamin untuk anak sampai 5 tahun. Ruang Tumbuh hanya memakai referensi ini setelah dataset dan perhitungan divalidasi.'},
     'measurement_position': {
         'source': 'https://cdn.who.int/media/docs/default-source/child-growth/child-growth-standards/indicators/instructions-en.pdf',
-        'reviewed_at': '2026-11-02', 'version': 'WHO expanded-table instructions',
-        'text': 'Panjang badan diukur berbaring, sedangkan tinggi badan diukur berdiri. Keduanya dicatat terpisah bersama posisi dan tanggal pengukuran. Saya tidak menebak posisi atau mengganti nilai pengukuranmu.'},
+        'source_title': 'WHO Child Growth Standards: expanded tables technical notes',
+        'source_version': 'PDF instruksi expanded tables; tidak mencantumkan edisi',
+        'reviewed_at': '2026-11-03', 'age_scope': 'Lahir sampai 60 bulan lengkap',
+        'applicability': 'Kurva panjang/tinggi-menurut-umur beralih dari panjang berbaring ke tinggi berdiri pada usia 2 tahun.',
+        'text': 'Pada kurva panjang/tinggi-menurut-umur WHO, pengukuran beralih dari panjang berbaring ke tinggi berdiri saat usia 2 tahun. Catat posisi dan tanggal; aplikasi tidak menebak posisi atau mengubah nilainya.'},
 }
 
 
@@ -25,6 +30,8 @@ def answer(text):
         key = 'measurement_position' if 'panjang' in text.lower() and 'tinggi' in text.lower() else 'growth_reference' if licensed_query(text) else None
         if key:
             item = REGISTRY[key]
-            return (item['text'] + '\nPenjelasan aplikasi; WHO adalah sumber referensi, bukan penulis respons ini.\n'
-                    + item['source'] + '\nVersi: ' + item['version'] + ' · ditinjau ' + item['reviewed_at'])
+            return (item['text'] + '\nBatas cakupan: ' + item['age_scope'] + '. ' + item['applicability'] + '\n'
+                    + 'Ringkasan statis aplikasi; tautan sumber tidak dibuka ulang saat chat. WHO adalah sumber referensi, bukan penulis respons ini.\n'
+                    + item['source_title'] + ' · ' + item['source_version'] + ' · ditinjau ' + item['reviewed_at'] + '\n'
+                    + item['source'])
     return None
