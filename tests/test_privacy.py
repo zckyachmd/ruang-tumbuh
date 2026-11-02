@@ -12,6 +12,10 @@ class RotationConnection:
         self.rows = rows
 
     def execute(self, query, params=None):
+        if query.startswith('SELECT EXISTS'):
+            return type('Result', (), {'fetchone': lambda _self: (False,)})()
+        if query.startswith('SELECT to_regclass'):
+            return type('Result', (), {'fetchone': lambda _self: (params[0] if params[0] in self.rows else None,)})()
         if query.startswith("SELECT "):
             table = query.split(" FROM ")[1]
             return type("Result", (), {"fetchall": lambda _self: ([self.rows[table]] if table in self.rows else [])})()
@@ -67,3 +71,4 @@ class DataCipherTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

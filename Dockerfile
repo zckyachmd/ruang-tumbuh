@@ -11,6 +11,8 @@ COPY --from=build /opt/venv /opt/venv
 COPY migrations /app/migrations
 COPY ruang_tumbuh /app/ruang_tumbuh
 COPY web /app/web
+COPY docs/who-assets.json /app/docs/who-assets.json
 USER 10001
 EXPOSE 8000
 CMD ["uvicorn", "ruang_tumbuh.api:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+

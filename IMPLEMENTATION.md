@@ -1,5 +1,7 @@
 # Inventaris dan rencana
 
+**Pembaruan review:** implementasi #2–#14 dan bukti CI dijelaskan dalam [REVIEW-IMPLEMENTATION.md](docs/REVIEW-IMPLEMENTATION.md). Izin WHO ID 202611419 telah diberikan dan dibaca; [ringkasan scope](docs/WHO-license-status.md) menggantikan status perizinan lama. Bagian di bawah mempertahankan inventaris baseline, bukan status terbaru seluruh fitur.
+
 Sumber kebutuhan: `PRD.md`.
 
 ## Deployment intent
@@ -23,3 +25,4 @@ Webhook dan long polling menerima pesan pribadi; offset polling dan pesan masuk 
 5. Lengkapi Compose, health/readiness, backup/restore, dokumentasi operasi, dan pengujian penerimaan end-to-end.
 
 WHO tetap nonaktif sampai dataset resmi dan perhitungan diverifikasi. Keputusan yang masih terbuka: domain dan bot, penyedia/model AI dan retensinya, serta jadwal/penerima yang dipilih pengguna. Risiko utama: privasi data keluarga, otorisasi lintas keluarga, pemrosesan waktu lokal dan delivery Telegram yang tidak dapat dijamin exactly-once. Jangan mengoperasikan fondasi ini sebagai produk sampai seluruh acceptance PRD terbukti.
+

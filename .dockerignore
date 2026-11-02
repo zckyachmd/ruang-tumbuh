@@ -10,3 +10,8 @@ __pycache__
 *.sql.gz
 tests
 PRD.txt
+
+
+# Licensed assets and private correspondence remain server-side
+who-data/
+*Your*request*Granted*.pdf

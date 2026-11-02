@@ -1,3 +1,5 @@
+> **Status diperbarui 2 November 2026:** surat WHO **ID 202611419** telah dibaca. Izin untuk sepuluh expanded z-score XLSX pada permohonan telah diberikan untuk Ruang Tumbuh sebagai layanan hosted nonkomersial, akses keluarga terdaftar/kerabat undangan, workbook server-side, tanpa direct download. Perizinan bukan blocker. Bagian penelitian perizinan lama di bawah merupakan catatan historis, bukan status pending saat ini. Ringkasan ketentuan aktif ada di [WHO-license-status.md](WHO-license-status.md). Dataset dan kalkulasi belum lolos validasi independen, sehingga perbandingan tetap nonaktif secara default.
+
 # WHO growth comparison: validation and reuse gates
 
 **Status:** research note. Ruang Tumbuh does not currently calculate or display WHO comparisons. Keep this feature disabled until the gates below are met.
@@ -68,10 +70,11 @@ This manifest pins candidate files for a rights inquiry; it is not permission to
 
 Ruang Tumbuh records weight, length, height and head circumference. Length now requires a recorded `recumbent` position and height `standing` in the API and chat; the Mini App exposes that position explicitly. Tool/method details are optional and only retained when supplied. These checks validate capture structure, not measurement technique or clinical plausibility: any positive value can still be stored, and no WHO reference range or z-score is checked. The UI states that WHO comparison is unavailable and the measurement is not a diagnosis; the PRD requires source/version/licence, indicator units/ranges, independent fixtures, distinct length and height, explicit missing coverage, and no cross-date joins. No WHO dataset or calculation is active. [Project PRD](../PRD.md)
 
-## Still unresolved
+## Historical unresolved items (superseded for permission by licence ID 202611419)
 
 - The exact rights and provenance for the specific WHO tables/files suitable for this app have not been established.
 - The WHO dataset terms and copyright policy cover related but not identical kinds of material; WHO has not confirmed which terms govern each selected growth-standard workbook or this app's stated noncommercial family-record use.
 - No individual-level calculation, chart rendering, clinical review, or visual comparison against WHO software has been validated in this project.
 
 *Research checked 2026-11-02. Source pages and downloadable materials can change; recheck the exact asset and its licence before implementation or distribution.*
+

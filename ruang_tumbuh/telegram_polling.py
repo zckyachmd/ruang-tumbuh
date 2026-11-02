@@ -11,8 +11,9 @@ import urllib.request
 from psycopg.types.json import Jsonb
 
 from .store import Conflict, Store
+from .admission import admit_update, QueueFull
 from .privacy import DataCipher
-from .telegram_updates import minimal_private_update
+from .telegram_updates import minimal_private_update, normalize_private_update
 
 
 LOCK_ID = 823746102
@@ -25,7 +26,7 @@ class PollingConfigurationError(RuntimeError):
 def telegram_get_updates(token, offset, timeout=30):
     request = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/getUpdates",
-        data=json.dumps({"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}).encode(),
+        data=json.dumps({"offset": offset, "timeout": timeout, "allowed_updates": ["message", "callback_query"]}).encode(),
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=timeout + 10) as response:
@@ -55,18 +56,15 @@ def persist_updates(conn, updates, cipher=None):
             raise ValueError("Invalid Telegram update batch")
         update_id = update["update_id"]
         highest = max(highest, update_id)
-        message = update.get("message")
-        if not isinstance(message, dict) or not isinstance(message.get("chat"), dict) or message["chat"].get("type") != "private":
+        try:
+            payload = normalize_private_update(update)
+        except (ValueError, TypeError, KeyError):
+            # A single unsupported/malformed private message must not poison the cursor.
             continue
-        sender = message.get("from")
-        text = message.get("text")
-        date = message.get("date")
-        user = sender.get("id") if isinstance(sender, dict) else None
-        if (type(user) is not int or user <= 0 or message["chat"].get("id") != user
-                or sender.get("is_bot") is True or not isinstance(text, str) or len(text) > 4096
-                or type(date) is not int or date <= 0):
+        if payload is None:
             continue
-        payload = minimal_private_update(update_id, user, text, date)
+        user = payload['message']['from']['id']
+        admit_update(conn, update_id, user)
         encrypted_payload = cipher.seal_json(payload, "inbound_updates.payload")
         inserted = conn.execute("""INSERT INTO inbound_updates (update_id,telegram_user_id,payload)
             VALUES (%s,%s,%s) ON CONFLICT DO NOTHING RETURNING update_id""",
@@ -111,7 +109,7 @@ def polling_loop(store, token, *, get_updates=telegram_get_updates, timeout=30, 
                     print(f'{exc} Retrying with backoff.', file=sys.stderr)
                     sleep(delay)
                     delay = min(delay * 2, 30)
-                except (urllib.error.URLError, TimeoutError, OSError, RuntimeError):
+                except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, QueueFull):
                     if not running():
                         break
                     print('Telegram polling failed; retrying. Check the bot token, network, and any active webhook; error details are withheld to protect the token.', file=sys.stderr)
@@ -142,3 +140,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

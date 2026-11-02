@@ -48,7 +48,7 @@ class TelegramPollingTests(unittest.TestCase):
         with patch('ruang_tumbuh.telegram_polling.urllib.request.urlopen', return_value=response) as urlopen:
             self.assertEqual(telegram_get_updates('synthetic', 123, timeout=45), [])
         request = urlopen.call_args.args[0]
-        self.assertEqual(json.loads(request.data), {'offset': 123, 'timeout': 45, 'allowed_updates': ['message']})
+        self.assertEqual(json.loads(request.data), {'offset': 123, 'timeout': 45, 'allowed_updates': ['message', 'callback_query']})
         self.assertEqual(urlopen.call_args.kwargs['timeout'], 55)
 
     def test_api_configuration_errors_give_safe_actionable_messages(self):
@@ -71,3 +71,4 @@ class TelegramPollingTests(unittest.TestCase):
             polling_loop(Store(), 'synthetic', get_updates=lambda token, offset, timeout: calls.append((token, offset, timeout)) or [],
                          timeout=45, running=lambda: next(running))
         self.assertEqual(calls, [('synthetic', 0, 45)])
+

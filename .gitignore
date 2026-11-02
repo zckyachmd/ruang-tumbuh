@@ -7,3 +7,8 @@ __pycache__/
 *.backup
 *.age
 *.csv
+
+
+# Licensed assets and private correspondence remain server-side
+who-data/
+*Your*request*Granted*.pdf

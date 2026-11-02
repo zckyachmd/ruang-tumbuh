@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from psycopg.types.json import Jsonb
 
-from .delivery import telegram_send
+from .delivery import telegram_send, RetryAfter
 from .store import Denied, Invalid
 
 MESSAGE = 'Ada minum atau popok yang belum sempat dicatat?'
@@ -48,25 +48,30 @@ def validate_kind_settings(kind, settings):
 
 
 def set_preferences(store, family, user, enabled, settings, kind='checkin'):
+    with store.connect() as conn:
+        set_preferences_in_transaction(conn, store, family, user, enabled, settings, kind)
+
+
+def set_preferences_in_transaction(conn, store, family, user, enabled, settings, kind='checkin'):
     if type(enabled) is not bool:
         raise Invalid()
     validate_kind_settings(kind, settings)
-    with store.connect() as conn:
-        store._access(conn, family, user)
-        if kind == 'daily_summary' and not conn.execute('SELECT 1 FROM children WHERE family_id=%s AND id=%s', (family, settings['child_id'])).fetchone():
-            raise Invalid()
-        old = conn.execute("SELECT settings,enabled FROM notification_preferences WHERE family_id=%s AND telegram_user_id=%s AND kind=%s", (family, user, kind)).fetchone()
-        old = (store.data_cipher.open_json(old[0], "notification_preferences.settings"), old[1]) if old else None
-        conn.execute("""INSERT INTO notification_preferences(family_id,telegram_user_id,kind,enabled,settings)
-            VALUES (%s,%s,%s,%s,%s) ON CONFLICT (family_id,telegram_user_id,kind)
-            DO UPDATE SET enabled=excluded.enabled,settings=excluded.settings""", (family, user, kind, enabled, Jsonb(store.data_cipher.seal_json(settings, "notification_preferences.settings"))))
-        changed_schedule = old and kind != 'reminder' and any(old[0].get(key) != settings.get(key) for key in ('time', 'timezone', 'child_id'))
-        if not enabled or changed_schedule:
-            conn.execute("UPDATE scheduled_occurrences SET status='cancelled',reschedule_allowed=%s WHERE family_id=%s AND telegram_user_id=%s AND kind=%s AND status IN ('pending','claimed')", (bool(enabled and changed_schedule), family, user, kind))
-        else:
-            conn.execute("UPDATE scheduled_occurrences SET next_attempt_at=NULL WHERE family_id=%s AND telegram_user_id=%s AND kind=%s AND status='pending'", (family, user, kind))
-        if enabled and old and not old[1] and kind != 'reminder':
-            conn.execute("UPDATE scheduled_occurrences SET reschedule_allowed=true WHERE family_id=%s AND telegram_user_id=%s AND kind=%s AND status='cancelled'", (family, user, kind))
+    store._access(conn, family, user)
+    if kind == 'daily_summary' and not conn.execute('SELECT 1 FROM children WHERE family_id=%s AND id=%s', (family, settings['child_id'])).fetchone():
+        raise Invalid()
+    old = conn.execute("SELECT settings,enabled FROM notification_preferences WHERE family_id=%s AND telegram_user_id=%s AND kind=%s", (family, user, kind)).fetchone()
+    old = (store.data_cipher.open_json(old[0], "notification_preferences.settings"), old[1]) if old else None
+    conn.execute("""INSERT INTO notification_preferences(family_id,telegram_user_id,kind,enabled,settings)
+        VALUES (%s,%s,%s,%s,%s) ON CONFLICT (family_id,telegram_user_id,kind)
+        DO UPDATE SET enabled=excluded.enabled,settings=excluded.settings""", (family, user, kind, enabled, Jsonb(store.data_cipher.seal_json(settings, "notification_preferences.settings"))))
+    changed_schedule = old and kind != 'reminder' and any(old[0].get(key) != settings.get(key) for key in ('time', 'timezone', 'child_id'))
+    if not enabled or changed_schedule:
+        conn.execute("UPDATE scheduled_occurrences SET status='cancelled',reschedule_allowed=%s WHERE family_id=%s AND telegram_user_id=%s AND kind=%s AND status IN ('pending','claimed')", (bool(enabled and changed_schedule), family, user, kind))
+    else:
+        conn.execute("UPDATE scheduled_occurrences SET next_attempt_at=NULL WHERE family_id=%s AND telegram_user_id=%s AND kind=%s AND status='pending'", (family, user, kind))
+    if enabled and old and not old[1] and kind != 'reminder':
+        conn.execute("UPDATE scheduled_occurrences SET reschedule_allowed=true WHERE family_id=%s AND telegram_user_id=%s AND kind=%s AND status='cancelled'", (family, user, kind))
+
 
 
 def get_preferences(store, family, user, kind='checkin'):
@@ -169,11 +174,11 @@ def deliver_checkin(store, mode, token='', sender=telegram_send, now=None):
             conn.execute("UPDATE scheduled_occurrences SET next_attempt_at=%s WHERE id=%s", (now + timedelta(minutes=1), occurrence))
             return True
         sent = conn.execute("""SELECT count(*) FROM scheduled_occurrences WHERE family_id=%s AND telegram_user_id=%s
-            AND local_date=%s AND status IN ('attempted','sent','simulated','uncertain')""", (family, user, job[2])).fetchone()[0]
+            AND local_date=%s AND kind=%s AND status IN ('attempted','sent','simulated','uncertain')""", (family, user, job[2], kind)).fetchone()[0]
         if sent >= settings['max_daily']:
             conn.execute("UPDATE scheduled_occurrences SET status='cancelled',finished_at=%s WHERE id=%s", (now, occurrence))
             return True
-        conn.execute("UPDATE scheduled_occurrences SET status='attempted',attempted_at=%s WHERE id=%s", (now, occurrence))
+        conn.execute("UPDATE scheduled_occurrences SET status='attempted',attempted_at=%s,attempts=attempts+1 WHERE id=%s", (now, occurrence))
     # Commit attempt first: a crash after a send must never cause blind redelivery.
     with store.connect() as conn:
         try:
@@ -199,6 +204,16 @@ def deliver_checkin(store, mode, token='', sender=telegram_send, now=None):
             conn.execute("UPDATE scheduled_occurrences SET status='cancelled',finished_at=%s WHERE id=%s AND status='attempted'", (now, occurrence))
             return True
         body = MESSAGE
+        if kind == 'checkin':
+            selected = conn.execute('SELECT c.id,c.nickname FROM chat_selections s JOIN children c ON c.family_id=s.family_id AND c.id=s.child_id WHERE s.family_id=%s AND s.telegram_user_id=%s', (family,user)).fetchone()
+            if not selected:
+                only = conn.execute('SELECT id,nickname FROM children WHERE family_id=%s ORDER BY id LIMIT 2', (family,)).fetchall()
+                selected = only[0] if len(only)==1 else None
+            if selected:
+                summary = store.summary_in_transaction(conn,family,selected[0],as_of=now)
+                name = store.data_cipher.open(selected[1], 'children.nickname')
+                body = f"Untuk {name}, hari ini ada {summary['counts']['feeding']} catatan minum dan {summary['counts']['diaper']} catatan popok. " + MESSAGE
+            body += ' Balas aktivitas yang ingin dicatat, atau “tidak ada” jika tidak ada tambahan.'
         if kind == 'reminder':
             body = 'Pengingat: ' + reminder[0]
         elif kind == 'daily_summary':
@@ -210,7 +225,11 @@ def deliver_checkin(store, mode, token='', sender=telegram_send, now=None):
                     f"popok {summary['counts']['diaper']}, tidur {summary['counts']['sleep']} catatan. "
                     f"ASIP {expressed}; formula {formula}. ASI langsung tidak termasuk volume. Data kosong bukan bukti aktivitas tidak terjadi.")
         status = 'simulated' if mode == 'fake' else sender(token, user, body)
+        if isinstance(status, RetryAfter):
+            conn.execute("UPDATE scheduled_occurrences SET status=CASE WHEN attempts<5 THEN 'pending' ELSE 'failed' END,next_attempt_at=%s WHERE id=%s AND status='attempted'", (now + timedelta(seconds=status.seconds), occurrence))
+            return True
         if status not in ('sent', 'failed', 'uncertain', 'simulated'):
             status = 'uncertain'
         conn.execute("UPDATE scheduled_occurrences SET status=%s,finished_at=%s WHERE id=%s AND status='attempted'", (status, now, occurrence))
     return True
+

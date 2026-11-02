@@ -93,6 +93,15 @@ class AgentTests(unittest.TestCase):
         for private_value in ('Lili', 'Keluarga Mawar', 'ibu@example.com', '+628123456789', 'Jl. Mawar No. 12', 'Jakarta'):
             self.assertNotIn(private_value, sent)
 
+    def test_short_profile_names_are_redacted_without_changing_other_words(self):
+        calls = []
+        provider = OpenAICompatibleProvider('synthetic', 'test-model', BASE_URL,
+            lambda request: calls.append(request) or tool_response('clarify'))
+        provider.propose('Li minum susu bersama Bo dan A', self.now, self.zone, known_names=['Li', 'Bo', 'A'])
+        sent = json.loads(calls[0]['messages'][1]['content'])['message']
+        self.assertIn('minum susu bersama', sent)
+        self.assertNotRegex(sent, r'\b(?:Li|Bo|A)\b')
+
     def test_compatible_redacts_labeled_unknown_name_and_identity_number(self):
         calls = []
         response = tool_response('clarify')
@@ -122,6 +131,25 @@ class AgentTests(unittest.TestCase):
         response = tool_response('out_of_scope')
         result = OpenAICompatibleProvider('synthetic', 'test-model', BASE_URL, lambda _: response).propose('berapa dosis obat?', self.now, self.zone)
         self.assertEqual(result['kind'], 'out_of_scope')
+
+    def test_questions_and_plans_cannot_be_proposed_as_facts(self):
+        args = {'events':[{'kind':'diaper','occurred_at':'2026-01-01T09:30:00+07:00','payload_json':'{"type":"pup"}'}]}
+        provider = OpenAICompatibleProvider('synthetic','test-model',BASE_URL,lambda _:tool_response('create_events',json.dumps(args)))
+        for text in ('Apakah tadi pup?', 'besok pup jam 9', 'rencana minum 60 ml', 'berapa kali pup hari ini?'):
+            with self.subTest(text=text):
+                self.assertEqual(provider.propose(text,self.now,self.zone)['kind'],'clarify')
+
+    def test_period_query_and_setting_proposals_are_bounded(self):
+        proposal={'mode':'summary','start_date':'2025-12-31','end_date':'2025-12-31'}
+        provider=OpenAICompatibleProvider('synthetic','test-model',BASE_URL,lambda _:tool_response('query_records',json.dumps(proposal)))
+        self.assertEqual(provider.propose('berapa ml kemarin?',self.now,self.zone)['start_date'],'2025-12-31')
+        proposal['start_date']='2020-01-01'
+        with self.assertRaises(ProviderError):provider.propose('riwayat',self.now,self.zone)
+        settings={'notification_kind':'checkin','enabled':True,'time':'13:00','quiet_start':None,'quiet_end':None,'max_daily':1,'clear_quiet_hours':False}
+        provider=OpenAICompatibleProvider('synthetic','test-model',BASE_URL,lambda _:tool_response('set_notification_preferences',json.dumps(settings)))
+        self.assertEqual(provider.propose('aktifkan checkin jam 13',self.now,self.zone)['operation'],'preferences')
+        settings['clear_quiet_hours']=True
+        self.assertEqual(provider.propose('aktifkan checkin jam 13',self.now,self.zone)['kind'],'clarify')
 
     def test_compatible_base_url_requires_tls_except_loopback(self):
         with self.assertRaisesRegex(ValueError, 'HTTPS'):
@@ -249,3 +277,4 @@ class AgentTests(unittest.TestCase):
                 OpenAICompatibleProvider('synthetic', 'test-model', BASE_URL, lambda _: response).propose('uji', self.now, self.zone)
         with self.assertRaises(ProviderError):
             OpenAICompatibleProvider('synthetic', 'test-model', BASE_URL, lambda _: 1 / 0).propose('uji', self.now, self.zone)
+

@@ -3,6 +3,8 @@
 import base64
 import json
 import os
+import hashlib
+import hmac
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -27,6 +29,13 @@ class DataCipher:
         if len(key) != 32:
             raise ValueError("APP_DATA_ENCRYPTION_KEY must decode to exactly 32 bytes")
         self._cipher = AESGCM(key)
+        self._lookup_key = hmac.new(key, b'ruang-tumbuh:event-lookup:v1', hashlib.sha256).digest()
+
+    def lookup_token(self, family, kind, payload):
+        if kind != 'diaper':
+            return None
+        category = 'poop' if payload['type'] in ('pup', 'both') else 'pee'
+        return hmac.new(self._lookup_key, f'{family}:{category}'.encode(), hashlib.sha256).digest()
 
     @classmethod
     def from_environment(cls):
@@ -60,6 +69,8 @@ class DataCipher:
 
 
 SENSITIVE_FIELDS = (
+        ("chat_mutations", "update_id", "content", "chat_mutations.content", True),
+        ("conversation_contexts", "telegram_user_id,family_id,child_id", "content", "conversation_contexts.content", True),
         ("families", "id", "name", "families.name", False),
         ("children", "id", "nickname", "children.nickname", False),
         ("children", "id", "birth_date", "children.birth_date", False),
@@ -70,6 +81,7 @@ SENSITIVE_FIELDS = (
         ("inbound_updates", "update_id", "payload", "inbound_updates.payload", True),
         ("chat_drafts", "update_id", "text", "chat_drafts.text", False),
         ("chat_outbox", "update_id", "body", "chat_outbox.body", False),
+        ("chat_outbox", "update_id", "reply_markup", "chat_outbox.reply_markup", True),
         ("notification_preferences", "family_id,telegram_user_id,kind", "settings", "notification_preferences.settings", True),
         ("agent_drafts", "update_id", "events", "agent_drafts.events", True),
         ("reminders", "id", "body", "reminders.body", False),
@@ -78,6 +90,10 @@ SENSITIVE_FIELDS = (
 
 def _walk_sensitive_fields(conn):
     for table, key_columns, column, context, is_json in SENSITIVE_FIELDS:
+        if not conn.execute("SELECT to_regclass(%s)", (table,)).fetchone()[0]:
+            continue
+        if column == 'reply_markup' and not conn.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='chat_outbox' AND column_name='reply_markup')").fetchone()[0]:
+            continue
         keys = key_columns.split(",")
         selected = ",".join(keys)
         for row in conn.execute(f"SELECT {selected},{column} FROM {table}").fetchall():
@@ -105,7 +121,12 @@ def rotate_sensitive_content(conn, old_cipher, new_cipher):
         if value is None or value == "" or value == {}:
             continue
         plaintext = old_cipher.open_json(value, context) if is_json else old_cipher.open(value, context)
+        if table == 'events' and conn.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='events' AND column_name='lookup_token')").fetchone()[0]:
+            metadata = conn.execute('SELECT family_id,kind FROM events WHERE id=%s', (values[0],)).fetchone()
+            conn.execute('UPDATE events SET lookup_token=%s WHERE id=%s',
+                         (new_cipher.lookup_token(metadata[0], metadata[1], plaintext), values[0]))
         encrypted = new_cipher.seal_json(plaintext, context) if is_json else new_cipher.seal(plaintext, context)
         conn.execute(f"UPDATE {table} SET {column}=%s WHERE " +
                      " AND ".join(f"{key}=%s" for key in keys),
                      (Jsonb(encrypted) if is_json else encrypted, *values))
+

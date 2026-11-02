@@ -11,6 +11,7 @@ from psycopg.types.json import Jsonb
 
 from .events import validate, valid_time
 from .privacy import DataCipher
+from .admission import admit_creator, admit_update
 
 class Denied(Exception):
     pass
@@ -182,6 +183,8 @@ class Store:
         if (not isinstance(name, str) or not name.strip() or len(name.strip()) > 100
                 or not isinstance(nickname, str) or not nickname.strip() or len(nickname.strip()) > 100):
             raise Invalid()
+        if not admit_creator(user):
+            raise Denied()
         try:
             ZoneInfo(zone)
         except (ValueError, KeyError):
@@ -258,6 +261,7 @@ class Store:
                 raise Invalid()
             conn.execute("UPDATE family_members SET revoked_at=now() WHERE family_id=%s AND telegram_user_id=%s", (family, target))
             conn.execute("DELETE FROM chat_selections WHERE family_id=%s AND telegram_user_id=%s", (family, target))
+            conn.execute('DELETE FROM conversation_contexts WHERE family_id=%s AND telegram_user_id=%s', (family, target))
             conn.execute("UPDATE notification_preferences SET enabled=false WHERE family_id=%s AND telegram_user_id=%s", (family, target))
             conn.execute("UPDATE ai_processing_consents SET enabled=false,decided_at=now() WHERE family_id=%s AND telegram_user_id=%s", (family, target))
             conn.execute("UPDATE scheduled_occurrences SET status='cancelled' WHERE family_id=%s AND telegram_user_id=%s AND status IN ('pending','claimed')", (family, target))
@@ -268,6 +272,7 @@ class Store:
         if type(update_id) is not int or type(user) is not int or not isinstance(payload, dict):
             raise Invalid()
         with self.connect() as conn:
+            admit_update(conn, update_id, user)
             encrypted = self._seal_json(payload, "inbound_updates.payload")
             row = conn.execute("""INSERT INTO inbound_updates (update_id,telegram_user_id,payload)
                 VALUES (%s,%s,%s) ON CONFLICT DO NOTHING RETURNING update_id""", (update_id, user, Jsonb(encrypted))).fetchone()
@@ -312,19 +317,19 @@ class Store:
             if not conn.execute("SELECT 1 FROM children WHERE family_id=%s AND id=%s", (family, child)).fetchone():
                 raise Invalid()
             for entry in entries:
-                ids.append(conn.execute("""INSERT INTO events (family_id,child_id,kind,payload,occurred_at,created_by)
-                    VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""", (family, child, entry['kind'], Jsonb(self._seal_json(entry['payload'], "events.payload")), entry['occurred_at'], user)).fetchone()[0])
+                ids.append(conn.execute("""INSERT INTO events (family_id,child_id,kind,payload,occurred_at,created_by,lookup_token)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""", (family, child, entry['kind'], Jsonb(self._seal_json(entry['payload'], "events.payload")), entry['occurred_at'], user, self.data_cipher.lookup_token(family, entry['kind'], entry['payload']))).fetchone()[0])
             if update_id is not None:
                 conn.execute("INSERT INTO actions (update_id,action_key,request_hash,result) VALUES (%s,%s,%s,%s)", (update_id, action_key, fingerprint, Jsonb(self._seal_json({'event_ids': ids}, "actions.result"))))
             if request_key is not None:
                 conn.execute("UPDATE api_actions SET result=%s WHERE telegram_user_id=%s AND action_key=%s", (Jsonb({'event_ids': ids}), user, request_key))
         return ids
 
-    def confirm_agent_draft(self, family, user, draft_id):
+    def confirm_agent_draft(self, family, user, draft_id, *, child=None):
         with self.connect() as conn:
             self._access(conn, family, user)
             row = conn.execute("SELECT events,child_id,status FROM agent_drafts WHERE update_id=%s AND family_id=%s AND telegram_user_id=%s AND expires_at>now() FOR UPDATE", (draft_id, family, user)).fetchone()
-            if not row or row[2] == 'cancelled':
+            if not row or row[2] == 'cancelled' or (child is not None and row[1] != child):
                 raise Invalid()
             entries = [dict(item, occurred_at=datetime.fromisoformat(item['occurred_at'])) for item in self._open_json(row[0], "agent_drafts.events")]
             validate_entries(entries)
@@ -337,8 +342,8 @@ class Store:
                 raise Conflict()
             ids = []
             for entry in entries:
-                ids.append(conn.execute("""INSERT INTO events (family_id,child_id,kind,payload,occurred_at,created_by)
-                    VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""", (family, row[1], entry['kind'], Jsonb(self._seal_json(entry['payload'], "events.payload")), entry['occurred_at'], user)).fetchone()[0])
+                ids.append(conn.execute("""INSERT INTO events (family_id,child_id,kind,payload,occurred_at,created_by,lookup_token)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""", (family, row[1], entry['kind'], Jsonb(self._seal_json(entry['payload'], "events.payload")), entry['occurred_at'], user, self.data_cipher.lookup_token(family, entry['kind'], entry['payload']))).fetchone()[0])
             request = {'family': family, 'user': user, 'child': row[1], 'entries': [dict(e, occurred_at=e['occurred_at'].isoformat()) for e in entries]}
             fingerprint = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).digest()
             conn.execute("INSERT INTO actions (update_id,action_key,request_hash,result) VALUES (%s,'create_events',%s,%s)", (draft_id, fingerprint, Jsonb(self._seal_json({'event_ids': ids}, "actions.result"))))
@@ -394,14 +399,15 @@ class Store:
             raise Invalid()
         with self.connect() as conn:
             self._access(conn, family, user)
-            rows = conn.execute("""SELECT kind,payload,occurred_at FROM events WHERE family_id=%s AND child_id=%s
-                AND kind=%s AND deleted_at IS NULL AND occurred_at<=%s
-                ORDER BY occurred_at DESC,id DESC""", (family, child, kinds[category], before)).fetchall()
-            for kind, payload, occurred_at in rows:
-                payload = self._open_json(payload, "events.payload")
-                if category != "poop" or payload.get("type") in ("pup", "both"):
-                    return kind, payload, occurred_at
-            return None
+            lookup = self.data_cipher.lookup_token(family, 'diaper', {'type':'pup'}) if category == 'poop' else None
+            query = """SELECT kind,payload,occurred_at FROM events WHERE family_id=%s AND child_id=%s
+                AND kind=%s AND deleted_at IS NULL AND occurred_at<=%s"""
+            params = (family, child, kinds[category], before)
+            if category == 'poop':
+                query += ' AND lookup_token=%s'
+                params += (lookup,)
+            row = conn.execute(query + ' ORDER BY occurred_at DESC,id DESC LIMIT 1', params).fetchone()
+            return (row[0], self._open_json(row[1], 'events.payload'), row[2]) if row else None
 
     def agent_usage(self, family, user):
         with self.connect() as conn:
@@ -418,9 +424,9 @@ class Store:
                 raise Conflict()
             if not validate(existing[0], payload) or not valid_time(existing[0], payload, occurred_at):
                 raise Invalid()
-            result = conn.execute("""UPDATE events SET payload=%s, occurred_at=%s, updated_at=now(),version=version+1
+            result = conn.execute("""UPDATE events SET payload=%s, occurred_at=%s, lookup_token=%s, updated_at=now(),version=version+1
                 WHERE family_id=%s AND id=%s AND version=%s AND deleted_at IS NULL RETURNING version""",
-                (Jsonb(self._seal_json(payload, "events.payload")), occurred_at, family, event, version)).fetchone()
+                (Jsonb(self._seal_json(payload, "events.payload")), occurred_at, self.data_cipher.lookup_token(family, existing[0], payload), family, event, version)).fetchone()
             if not result:
                 raise Conflict()
             conn.execute("INSERT INTO audit_log (family_id,actor_id,action,entity_type,entity_id) VALUES (%s,%s,'update','event',%s)", (family, user, event))
@@ -464,8 +470,9 @@ class Store:
             if not request:
                 raise Invalid()
             conn.execute('INSERT INTO family_deletion_receipts (family_id,actor_id,token_hash) VALUES (%s,%s,%s)', (family, user, digest))
-            conn.execute('DELETE FROM chat_outbox WHERE family_id=%s OR update_id IN (SELECT update_id FROM inbound_updates WHERE family_id=%s)', (family, family))
+            conn.execute('DELETE FROM chat_outbox WHERE family_id=%s OR authorization_families @> %s OR update_id IN (SELECT update_id FROM inbound_updates WHERE family_id=%s)', (family, Jsonb([family]), family))
             conn.execute('DELETE FROM agent_drafts WHERE family_id=%s', (family,))
+            conn.execute('DELETE FROM conversation_contexts WHERE family_id=%s', (family,))
             conn.execute('DELETE FROM agent_usage WHERE family_id=%s', (family,))
             conn.execute('DELETE FROM chat_drafts WHERE update_id IN (SELECT update_id FROM inbound_updates WHERE family_id=%s)', (family,))
             conn.execute('DELETE FROM actions WHERE update_id IN (SELECT update_id FROM inbound_updates WHERE family_id=%s)', (family,))
@@ -475,3 +482,4 @@ class Store:
             for table in ('checkin_answers', 'scheduled_occurrences', 'reminders', 'notification_preferences', 'ai_processing_consents', 'events', 'children', 'invitations', 'audit_log', 'family_members'):
                 conn.execute(f'DELETE FROM {table} WHERE family_id=%s', (family,))
             conn.execute('DELETE FROM families WHERE id=%s', (family,))
+
