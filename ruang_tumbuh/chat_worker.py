@@ -108,7 +108,9 @@ def _process_claimed(store, provider, row, token):
                     'Undang anggota (owner): /undang atau /undang ID_KELUARGA\n'
                     'Gabung dengan kode: /start KODE\n'
                     'Pilih profil: /keluarga lalu /pilih ID_KELUARGA ID_ANAK\n'
-                    'Catatan hanya dibuat dari informasi yang kamu kirim; ini bukan diagnosis atau layanan darurat.')
+                    'Catatan dan ringkasan keluarga memakai data yang kamu kirim; data kosong tidak ditebak. Jika kamu menyetujui, AI eksternal membantu memahami permintaan catatan, bukan menilai kesehatan. Edukasi pertumbuhan yang tersedia hanya ringkasan statis dari referensi WHO untuk anak sampai 60 bulan; sumber tidak dibuka ulang saat chat.\n'
+                    'Rujukan: https://www.who.int/tools/child-growth-standards dan https://cdn.who.int/media/docs/default-source/child-growth/child-growth-standards/indicators/instructions-en.pdf\n'
+                    'WHO bukan penulis atau pengesah aplikasi. Routing kekhawatiran kesehatan belum ditinjau tenaga kesehatan. Ini bukan diagnosis atau layanan darurat.')
                 draft = False
             elif name == 'unsupported':
                 response = 'Bisa kirim dalam teks? Saat ini aku belum membaca foto, suara, atau file. Belum ada catatan yang disimpan.'

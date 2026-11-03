@@ -7,6 +7,24 @@ from ruang_tumbuh.privacy import DataCipher
 
 
 class WorkerFaultTests(unittest.TestCase):
+    def test_help_discloses_reference_scope_and_clinical_review_status(self):
+        store, provider = MagicMock(), MagicMock()
+        cipher = DataCipher('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
+        store.data_cipher = cipher
+        store.families.return_value = []
+        store.chat_selection.return_value = None
+        message = {'message':{'text':'/help','date':int(datetime.now(timezone.utc).timestamp())}}
+        sealed = cipher.seal_json(message,'inbound_updates.payload')
+        self.assertTrue(_process_claimed(store,provider,(7,9,sealed),'lease'))
+        provider.propose.assert_not_called()
+        calls = store.connect.return_value.__enter__.return_value.execute.call_args_list
+        outbox = next(call.args[1][3] for call in calls if 'INSERT INTO chat_outbox' in call.args[0])
+        response = cipher.open(outbox,'chat_outbox.body')
+        self.assertIn('data kosong tidak ditebak',response)
+        self.assertIn('AI eksternal membantu memahami permintaan catatan',response)
+        self.assertIn('https://www.who.int/tools/child-growth-standards',response)
+        self.assertIn('belum ditinjau tenaga kesehatan',response)
+
     def test_corrupt_row_is_quarantined_without_running_provider(self):
         store, provider = MagicMock(), MagicMock()
         store.data_cipher = DataCipher('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
