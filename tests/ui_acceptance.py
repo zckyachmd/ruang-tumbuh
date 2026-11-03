@@ -50,7 +50,7 @@ try:
             source_note=page.locator('details.source-note')
             expect(source_note).to_contain_text('data yang kosong tidak disimpulkan')
             source_note.locator('summary').click()
-            expect(source_note.get_by_role('link',name='WHO Child Growth Standards')).to_have_attribute('href','https://www.who.int/tools/child-growth-standards')
+            expect(source_note.get_by_role('link',name='WHO Child Growth Standards',exact=True)).to_have_attribute('href','https://www.who.int/tools/child-growth-standards')
             expect(source_note).to_contain_text('Routing kekhawatiran kesehatan belum ditinjau tenaga kesehatan')
             page.get_by_role('button',name='Pengaturan',exact=True).click()
             expect(page.get_by_role('heading',name='Pengingat pribadi')).to_be_visible()
