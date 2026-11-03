@@ -2,6 +2,8 @@
 
 Status: **belum ditinjau tenaga kesehatan**. Dokumen ini meminta penilaian klinis; bukan panduan triase, validasi klinis, atau rekomendasi perawatan.
 
+Mini App kini menampilkan batas informasi dan tautan sumber pertumbuhan pada setiap halaman; Telegram `/help` memuat cakupan yang sama. Pengungkapan ini membantu pengguna memahami cakupan data, sumber, dan status review; pengungkapan tersebut tidak menggantikan penilaian tenaga kesehatan yang diminta di bawah.
+
 ## Yang perlu ditinjau
 
 Chat memakai tiga hasil internal: `emergency` untuk tanda yang dinilai sedang terjadi, `health_boundary` untuk kekhawatiran atau riwayat, dan `none` untuk hal yang tidak dikenali sebagai kekhawatiran oleh router. Label itu bukan diagnosis dan tidak menjamin bahwa keluhan yang tidak dikenali aman. Pemeriksaan ini tidak memakai jawaban AI sebagai expected result.

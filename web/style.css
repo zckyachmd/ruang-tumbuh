@@ -5,3 +5,5 @@
 .event{grid-template-columns:minmax(0,1fr) auto}
 .panel button{max-width:100%;overflow-wrap:anywhere}
 input,select,textarea{min-width:0}
+.source-note{max-width:1040px;margin:24px auto 0;padding:0 20px 24px}.source-note summary{width:max-content;max-width:100%;color:#285943;text-decoration:underline;text-underline-offset:3px;cursor:pointer}.source-note[open] summary{margin-bottom:12px}.source-note p{max-width:78ch}.source-note li{margin:6px 0}.source-note a{color:#245f43}
+@media(max-width:700px){.source-note{padding:0 16px 24px}}
